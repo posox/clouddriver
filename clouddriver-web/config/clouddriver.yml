@@ -250,6 +250,9 @@ openstack:
 kubernetes:
   enabled: false
 
+helm:
+  enabled: false
+
 dockerRegistry:
   enabled: ${DOCKER_REGISTRY_ENABLED:false}
 

@@ -28,6 +28,7 @@ import com.netflix.spinnaker.clouddriver.docker.registry.DockerRegistryConfigura
 import com.netflix.spinnaker.clouddriver.ecs.EcsConfiguration
 import com.netflix.spinnaker.clouddriver.eureka.EurekaProviderConfiguration
 import com.netflix.spinnaker.clouddriver.google.GoogleConfiguration
+import com.netflix.spinnaker.clouddriver.helm.HelmConfiguration
 import com.netflix.spinnaker.clouddriver.jobs.config.LocalJobConfig
 import com.netflix.spinnaker.clouddriver.kubernetes.KubernetesConfiguration
 import com.netflix.spinnaker.clouddriver.openstack.OpenstackConfiguration
@@ -67,7 +68,8 @@ import java.security.Security
   SecurityConfig,
   EurekaProviderConfiguration,
   DcosConfiguration,
-  LocalJobConfig
+  LocalJobConfig,
+  HelmConfiguration
 ])
 @ComponentScan([
   'com.netflix.spinnaker.config',
