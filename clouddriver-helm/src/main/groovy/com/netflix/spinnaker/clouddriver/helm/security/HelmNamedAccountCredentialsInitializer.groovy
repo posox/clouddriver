@@ -2,6 +2,7 @@ package com.netflix.spinnaker.clouddriver.helm.security
 
 import com.netflix.spinnaker.cats.module.CatsModule
 import com.netflix.spinnaker.cats.provider.ProviderSynchronizerTypeWrapper
+import com.netflix.spinnaker.clouddriver.helm.HelmJobExecutor
 import com.netflix.spinnaker.clouddriver.helm.config.HelmConfigurationProperties
 import com.netflix.spinnaker.clouddriver.security.AccountCredentialsRepository
 import com.netflix.spinnaker.clouddriver.security.CredentialsInitializerSynchronizable
@@ -31,9 +32,10 @@ class HelmNamedAccountCredentialsInitializer implements CredentialsInitializerSy
     HelmConfigurationProperties helmConfigurationProperties,
     ApplicationContext applicationContext,
     AccountCredentialsRepository accountCredentialsRepository,
-    List<ProviderSynchronizerTypeWrapper> providerSynchronizerTypeWrappers
+    List<ProviderSynchronizerTypeWrapper> providerSynchronizerTypeWrappers,
+    HelmJobExecutor jobExecutor
   ) {
-    synchronizeHelmAccounts(clouddriverUserAgentApplicationName, helmConfigurationProperties, null, applicationContext, accountCredentialsRepository, providerSynchronizerTypeWrappers)
+    synchronizeHelmAccounts(clouddriverUserAgentApplicationName, helmConfigurationProperties, null, applicationContext, accountCredentialsRepository, providerSynchronizerTypeWrappers, jobExecutor)
   }
 
   @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
@@ -44,7 +46,8 @@ class HelmNamedAccountCredentialsInitializer implements CredentialsInitializerSy
     CatsModule catsModule,
     ApplicationContext applicationContext,
     AccountCredentialsRepository accountCredentialsRepository,
-    List<ProviderSynchronizerTypeWrapper> providerSynchronizerTypeWrappers) {
+    List<ProviderSynchronizerTypeWrapper> providerSynchronizerTypeWrappers,
+    HelmJobExecutor jobExecutor) {
     def (ArrayList<HelmConfigurationProperties.ManagedAccount> accountsToAdd, List<String> namesOfDeletedAccounts) =
       ProviderUtils.calculateAccountDeltas(accountCredentialsRepository,
                                            HelmNamedAccountCredentials,
@@ -52,10 +55,14 @@ class HelmNamedAccountCredentialsInitializer implements CredentialsInitializerSy
 
     accountsToAdd.each {HelmConfigurationProperties.ManagedAccount managedAccount ->
       try {
+        managedAccount.installTiller(jobExecutor)
+
         def helmAccount = new HelmNamedAccountCredentials(managedAccount.name,
                                                           managedAccount.environment ?: managedAccount.name,
                                                           managedAccount.accountType ?: managedAccount.name,
-                                                          null)
+                                                          jobExecutor,
+                                                          managedAccount.tillerNamespace ?: "demo",
+                                                          managedAccount.kubeconfigFile ?: "/kubeconfig")
         accountCredentialsRepository.save(managedAccount.name, helmAccount)
       } catch (e) {
         log.info("Couldn't load account ${managedAccount.name} for Helm", e)

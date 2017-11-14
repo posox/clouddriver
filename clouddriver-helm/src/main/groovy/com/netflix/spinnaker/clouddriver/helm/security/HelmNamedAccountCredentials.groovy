@@ -1,5 +1,6 @@
 package com.netflix.spinnaker.clouddriver.helm.security
 
+import com.netflix.spinnaker.clouddriver.helm.HelmJobExecutor
 import com.netflix.spinnaker.clouddriver.security.AccountCredentials
 import groovy.util.logging.Slf4j
 
@@ -12,16 +13,17 @@ class HelmNamedAccountCredentials implements AccountCredentials<HelmCredentials>
   private HelmCredentials credentials
   private final List<String> requiredGroupMembership
 
-  HelmNamedAccountCredentials(String name, String environment, String accountType, List<String> requiredroupMembership) {
+  HelmNamedAccountCredentials(String name, String environment, String accountType, HelmJobExecutor jobExecutor,
+                              String tillerNamespace, String kubeconfigFile) {
     this.name = name
     this.environment = environment
     this.accountType = accountType
     this.requiredGroupMembership = requiredGroupMembership
-    this.credentials = buildCredentials()
+    this.credentials = buildCredentials(jobExecutor, tillerNamespace, kubeconfigFile)
   }
 
-  private HelmCredentials buildCredentials() {
-    new HelmCredentials()
+  private HelmCredentials buildCredentials(HelmJobExecutor jobExecutor, String tillerNamespace, String kubeconfigFile) {
+    new HelmCredentials(jobExecutor, tillerNamespace, kubeconfigFile)
   }
 
   @Override
