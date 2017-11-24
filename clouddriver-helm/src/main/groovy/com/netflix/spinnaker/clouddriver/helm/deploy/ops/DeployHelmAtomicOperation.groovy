@@ -4,12 +4,8 @@ import com.netflix.spinnaker.clouddriver.data.task.Task
 import com.netflix.spinnaker.clouddriver.data.task.TaskRepository
 import com.netflix.spinnaker.clouddriver.deploy.DeploymentResult
 import com.netflix.spinnaker.clouddriver.helm.HelmJobExecutor
-import com.netflix.spinnaker.clouddriver.helm.client.HelmClient
-import com.netflix.spinnaker.clouddriver.helm.client.HelmRelease
 import com.netflix.spinnaker.clouddriver.helm.deploy.HelmServerGroupNameResolver
-import com.netflix.spinnaker.clouddriver.helm.deploy.HelmUtil
 import com.netflix.spinnaker.clouddriver.helm.deploy.description.DeployHelmAtomicOperationDescription
-import com.netflix.spinnaker.clouddriver.helm.model.HelmServerGroup
 import com.netflix.spinnaker.clouddriver.orchestration.AtomicOperation
 import org.springframework.beans.factory.annotation.Autowired
 

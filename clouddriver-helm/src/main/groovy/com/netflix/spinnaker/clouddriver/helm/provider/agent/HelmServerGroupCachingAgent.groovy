@@ -78,7 +78,13 @@ class HelmServerGroupCachingAgent extends AbstractHelmCachingAgent {
       cachedServerGroups[serverGroupKey].with {
         attributes.name = serverGroupName
         attributes.release = release
-        attributes.serverGroup = new HelmServerGroup(serverGroupName, namespace, accountName)
+        attributes.serverGroup = new HelmServerGroup(
+          name: serverGroupName,
+          region: namespace,
+          account: accountName,
+          chart: release.chart,
+          status: release.status
+        )
         relationships[Keys.Namespace.APPLICATIONS.ns].add(applicationKey)
         relationships[Keys.Namespace.CLUSTERS.ns].add(clusterKey)
       }

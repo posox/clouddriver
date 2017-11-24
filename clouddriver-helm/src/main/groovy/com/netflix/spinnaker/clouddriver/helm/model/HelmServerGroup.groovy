@@ -13,6 +13,8 @@ class HelmServerGroup implements ServerGroup, Serializable {
   final String cloudProvider = HelmCloudProvider.ID
   String account
   String region
+  String chart
+  String status
   Long createdTime
   Set<String> zones
   Set<Void> instances
@@ -21,12 +23,6 @@ class HelmServerGroup implements ServerGroup, Serializable {
   Map<String, Object> launchConfig
 
   HelmServerGroup() {}
-
-  HelmServerGroup(String name, String namespace, String accountName) {
-    this.name = name
-    this.region = namespace
-    this.account = accountName
-  }
 
   @Override
   Boolean isDisabled() {
