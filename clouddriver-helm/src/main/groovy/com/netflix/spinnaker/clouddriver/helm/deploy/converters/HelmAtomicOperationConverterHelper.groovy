@@ -7,8 +7,7 @@ class HelmAtomicOperationConverterHelper {
   static Object convertDescription(Map input,
                                    AbstractAtomicOperationsCredentialsSupport credentialsSupport,
                                    Class targetDescriptionType) {
-    def rawcreds = input.credentials as String
-    def credentials = credentialsSupport.getCredentialsObject(rawcreds as String)?.getCredentials()
+    def credentials = credentialsSupport.getCredentialsObject(input.account as String)?.getCredentials()
     def converted = credentialsSupport.objectMapper
       .copy()
       .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
