@@ -34,6 +34,11 @@ class HelmClient {
     helmReleases
   }
 
+  def deleteRelease(String release) {
+    def command = ["helm", "delete", "--purge", release]
+    execute(command)
+  }
+
   private JobStatus execute(List<String> command) {
     System.setProperty("TILLER_NAMESPACE", this.tillerNamespace)
     System.setProperty("KUBECONFIG", this.kubeconfigFile)

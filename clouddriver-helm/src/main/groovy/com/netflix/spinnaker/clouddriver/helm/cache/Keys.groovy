@@ -7,6 +7,7 @@ class Keys {
     APPLICATIONS,
     SERVER_GROUPS,
     CLUSTERS,
+    INSTANCES,
 
     static String provider = "helm"
 

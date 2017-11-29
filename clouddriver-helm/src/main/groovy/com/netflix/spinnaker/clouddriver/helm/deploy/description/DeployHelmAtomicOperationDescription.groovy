@@ -8,6 +8,7 @@ import groovy.transform.Canonical
 @AutoClone
 @Canonical
 class DeployHelmAtomicOperationDescription extends HelmAtomicOperationDescription implements DeployDescription {
+  String name
   String chart
   String release
   String values
@@ -16,5 +17,4 @@ class DeployHelmAtomicOperationDescription extends HelmAtomicOperationDescriptio
   String region
   String account
   String serverGroupName
-
 }

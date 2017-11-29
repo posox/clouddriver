@@ -22,6 +22,8 @@ class HelmServerGroupCachingAgent extends AbstractHelmCachingAgent {
 
   static final Set<AgentDataType> types = Collections.unmodifiableSet([
     AUTHORITATIVE.forType(Keys.Namespace.SERVER_GROUPS.ns),
+    AUTHORITATIVE.forType(Keys.Namespace.CLUSTERS.ns),
+    AUTHORITATIVE.forType(Keys.Namespace.APPLICATIONS.ns),
   ] as Set)
 
   String agentType = "${accountName}/${HelmServerGroupCachingAgent.simpleName}"
@@ -87,6 +89,7 @@ class HelmServerGroupCachingAgent extends AbstractHelmCachingAgent {
         )
         relationships[Keys.Namespace.APPLICATIONS.ns].add(applicationKey)
         relationships[Keys.Namespace.CLUSTERS.ns].add(clusterKey)
+        relationships[Keys.Namespace.INSTANCES.ns].addAll([])
       }
     }
 
