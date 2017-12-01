@@ -35,10 +35,16 @@ class HelmClient {
     helmReleases
   }
 
-  def createRelease(String chart, String name, String namespace = null) {
+  def createRelease(String chart, String name, String namespace = null, String values = null) {
     def command = ["helm", "install", chart, "--name", name]
     if (namespace) {
       command << "--namespace" << namespace
+    }
+    if (values) {
+      File.createTempFile("helm-values-${name}", ".yaml").with {
+        write(values)
+        command << "--values" << absolutePath
+      }
     }
     execute(command)
   }

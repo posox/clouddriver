@@ -43,7 +43,7 @@ class DeployHelmAtomicOperation implements AtomicOperation<DeploymentResult> {
     def clusterName = serverGroupNameResolver.combineAppStackDetail(description.application, description.release, "")
 
     task.updateStatus(PHASE, "Deploy ${description.chart} chart")
-    description.helmCredentials.client.createRelease(description.chart, clusterName, description?.namespace)
+    description.helmCredentials.client.createRelease(description.chart, clusterName, description?.namespace, description?.values)
 
     description.helmCredentials.client.listReleases().find {
       it.name == clusterName
