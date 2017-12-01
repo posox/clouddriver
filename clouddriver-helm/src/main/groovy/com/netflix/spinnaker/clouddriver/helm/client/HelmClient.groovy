@@ -4,19 +4,20 @@ import com.netflix.spinnaker.clouddriver.helm.HelmJobExecutor
 import com.netflix.spinnaker.clouddriver.jobs.JobStatus
 
 class HelmClient {
-  final HelmJobExecutor jobExecutor
-  final String tillerNamespace
-  final String kubeconfigFile
+  private final HelmJobExecutor jobExecutor
 
-  HelmClient(HelmJobExecutor jobExecutor, String tillerNamespace, String kubeconfigFile) {
+  HelmClient(HelmJobExecutor jobExecutor) {
     this.jobExecutor = jobExecutor
-    this.tillerNamespace = tillerNamespace
-    this.kubeconfigFile = kubeconfigFile
+  }
+
+  def installTiller() {
+    def command = ["helm", "init"]
+    execute(command)
   }
 
   List<HelmRelease> listReleases() {
     def command = ["helm", "list"]
-    def jobStatus = jobExecutor.runCommand(command)
+    def jobStatus = execute(command)
 
     String stdout = jobStatus.stdOut
     // remove header
@@ -34,14 +35,20 @@ class HelmClient {
     helmReleases
   }
 
+  def createRelease(String chart, String name, String namespace = null) {
+    def command = ["helm", "install", chart, "--name", name]
+    if (namespace) {
+      command << "--namespace" << namespace
+    }
+    execute(command)
+  }
+
   def deleteRelease(String release) {
     def command = ["helm", "delete", "--purge", release]
     execute(command)
   }
 
   private JobStatus execute(List<String> command) {
-    System.setProperty("TILLER_NAMESPACE", this.tillerNamespace)
-    System.setProperty("KUBECONFIG", this.kubeconfigFile)
     jobExecutor.runCommand(command)
   }
 }

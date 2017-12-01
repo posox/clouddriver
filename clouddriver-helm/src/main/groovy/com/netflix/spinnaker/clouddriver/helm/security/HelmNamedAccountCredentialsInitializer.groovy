@@ -8,7 +8,6 @@ import com.netflix.spinnaker.clouddriver.security.AccountCredentialsRepository
 import com.netflix.spinnaker.clouddriver.security.CredentialsInitializerSynchronizable
 import com.netflix.spinnaker.clouddriver.security.ProviderUtils
 import org.apache.log4j.Logger
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.config.ConfigurableBeanFactory
 import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Bean
@@ -55,14 +54,12 @@ class HelmNamedAccountCredentialsInitializer implements CredentialsInitializerSy
 
     accountsToAdd.each {HelmConfigurationProperties.ManagedAccount managedAccount ->
       try {
-        managedAccount.installTiller(jobExecutor)
-
         def helmAccount = new HelmNamedAccountCredentials(managedAccount.name,
                                                           managedAccount.environment ?: managedAccount.name,
                                                           managedAccount.accountType ?: managedAccount.name,
-                                                          jobExecutor,
-                                                          managedAccount.tillerNamespace ?: "demo",
-                                                          managedAccount.kubeconfigFile ?: "/kubeconfig")
+                                                          jobExecutor)
+        jobExecutor.build(managedAccount.tillerNamespace ?: "kube-system", managedAccount.kubeconfigFile ?: "/kubeconfig")
+        helmAccount.credentials.client.installTiller()
         accountCredentialsRepository.save(managedAccount.name, helmAccount)
       } catch (e) {
         log.info("Couldn't load account ${managedAccount.name} for Helm", e)

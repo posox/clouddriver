@@ -15,9 +15,17 @@ class HelmJobExecutor {
   @Autowired
   JobExecutor jobExecutor
 
+  private Map<String, String> systemEnv
+
+  def build(String tillerNamespace, String kubeconfig) {
+    systemEnv = new HashMap<String, String>(System.getenv())
+    systemEnv.put("TILLER_NAMESPACE", tillerNamespace)
+    systemEnv.put('KUBECONFIG', kubeconfig)
+  }
+
   JobStatus runCommand(List<String> command) {
     String jobId = jobExecutor.startJob(new JobRequest(tokenizedCommand: command),
-                                        System.getenv(),
+                                        systemEnv,
                                         new ByteArrayInputStream())
     waitForJobCompletion(jobId)
   }
