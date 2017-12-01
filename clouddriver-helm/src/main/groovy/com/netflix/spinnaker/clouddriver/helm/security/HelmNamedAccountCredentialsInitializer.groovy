@@ -60,6 +60,9 @@ class HelmNamedAccountCredentialsInitializer implements CredentialsInitializerSy
                                                           jobExecutor)
         jobExecutor.build(managedAccount.tillerNamespace ?: "kube-system", managedAccount.kubeconfigFile ?: "/kubeconfig")
         helmAccount.credentials.client.installTiller()
+        managedAccount.helmRepos.each { HelmConfigurationProperties.ManagedAccount.HelmRepo repo ->
+          helmAccount.credentials.client.addRepo(repo.name, repo.address)
+        }
         accountCredentialsRepository.save(managedAccount.name, helmAccount)
       } catch (e) {
         log.info("Couldn't load account ${managedAccount.name} for Helm", e)

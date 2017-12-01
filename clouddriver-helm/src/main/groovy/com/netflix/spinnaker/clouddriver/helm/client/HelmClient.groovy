@@ -48,6 +48,11 @@ class HelmClient {
     execute(command)
   }
 
+  def addRepo(repoName, repoAddress) {
+    def command = ["helm", "repo", "add", repoName, repoAddress]
+    execute(command)
+  }
+
   private JobStatus execute(List<String> command) {
     jobExecutor.runCommand(command)
   }
