@@ -18,6 +18,7 @@ package com.netflix.spinnaker.clouddriver.kubernetes.v1.model
 
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.netflix.frigga.Names
+import com.netflix.spinnaker.clouddriver.kubernetes.provider.KubernetesModelUtil
 import com.netflix.spinnaker.clouddriver.model.JobState
 import com.netflix.spinnaker.clouddriver.model.JobStatus
 import io.fabric8.kubernetes.api.model.Pod
@@ -39,6 +40,7 @@ class KubernetesJobStatus implements JobStatus, Serializable {
   Set<String> securityGroups
   @JsonIgnore
   Pod pod
+  String logs
 
   KubernetesJobStatus(Pod pod, String account) {
     this.name = pod.metadata.name

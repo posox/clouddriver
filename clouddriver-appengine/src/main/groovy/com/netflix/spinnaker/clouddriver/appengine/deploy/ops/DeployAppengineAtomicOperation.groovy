@@ -17,11 +17,14 @@
 package com.netflix.spinnaker.clouddriver.appengine.deploy.ops
 
 import com.netflix.spinnaker.clouddriver.appengine.AppengineJobExecutor
-import com.netflix.spinnaker.clouddriver.appengine.gcsClient.AppengineGcsRepositoryClient
+import com.netflix.spinnaker.clouddriver.appengine.config.AppengineConfigurationProperties
 import com.netflix.spinnaker.clouddriver.appengine.deploy.AppengineMutexRepository
 import com.netflix.spinnaker.clouddriver.appengine.deploy.AppengineServerGroupNameResolver
 import com.netflix.spinnaker.clouddriver.appengine.deploy.description.DeployAppengineDescription
 import com.netflix.spinnaker.clouddriver.appengine.deploy.exception.AppengineOperationException
+import com.netflix.spinnaker.clouddriver.appengine.gcsClient.AppengineGcsRepositoryClient
+import com.netflix.spinnaker.clouddriver.appengine.artifacts.GcsStorageService
+import com.netflix.spinnaker.clouddriver.appengine.artifacts.config.StorageConfigurationProperties
 import com.netflix.spinnaker.clouddriver.data.task.Task
 import com.netflix.spinnaker.clouddriver.data.task.TaskRepository
 import com.netflix.spinnaker.clouddriver.deploy.DeploymentResult
@@ -29,6 +32,8 @@ import com.netflix.spinnaker.clouddriver.orchestration.AtomicOperation
 import org.springframework.beans.factory.annotation.Autowired
 
 import java.nio.file.Paths
+
+import static com.netflix.spinnaker.clouddriver.appengine.config.AppengineConfigurationProperties.ManagedAccount.GcloudReleaseTrack
 
 class DeployAppengineAtomicOperation implements AtomicOperation<DeploymentResult> {
   private static final String BASE_PHASE = "DEPLOY"
@@ -39,6 +44,12 @@ class DeployAppengineAtomicOperation implements AtomicOperation<DeploymentResult
 
   @Autowired
   AppengineJobExecutor jobExecutor
+
+  @Autowired(required=false)
+  StorageConfigurationProperties storageConfiguration
+
+  @Autowired(required=false)
+  GcsStorageService.Factory storageServiceFactory
 
   DeployAppengineDescription description
   boolean usesGcs
@@ -82,11 +93,21 @@ class DeployAppengineAtomicOperation implements AtomicOperation<DeploymentResult
     def repositoryClient
 
     if (usesGcs) {
+      if (storageConfiguration == null) {
+        throw new IllegalStateException(
+            "GCS has been disabled. To enable it, configure storage.gcs.enabled=false and restart clouddriver.")
+      }
+
       def applicationDirectoryRoot = description.applicationDirectoryRoot
-      repositoryClient = new AppengineGcsRepositoryClient(repositoryUrl, directoryPath, applicationDirectoryRoot, jobExecutor)
+      String credentialPath = ""
+      if (description.storageAccountName != null && !description.storageAccountName.isEmpty()) {
+        credentialPath = storageConfiguration.getAccount(description.storageAccountName).jsonPath
+      }
+      GcsStorageService storage = storageServiceFactory.newForCredentials(credentialPath)
+      repositoryClient = new AppengineGcsRepositoryClient(repositoryUrl, directoryPath, applicationDirectoryRoot,
+                                                          storage, jobExecutor)
       branchLogName = "(current)"
     } else {
-      
       repositoryClient = description.credentials.gitCredentials.buildRepositoryClient(
         repositoryUrl,
         directoryPath,
@@ -118,6 +139,7 @@ class DeployAppengineAtomicOperation implements AtomicOperation<DeploymentResult
     def accountEmail = description.credentials.serviceAccountEmail
     def region = description.credentials.region
     def applicationDirectoryRoot = description.applicationDirectoryRoot
+    def gcloudReleaseTrack = description.credentials.gcloudReleaseTrack
     def serverGroupNameResolver = new AppengineServerGroupNameResolver(project, region, description.credentials)
     def versionName = serverGroupNameResolver.resolveNextServerGroupName(description.application,
                                                                          description.stack,
@@ -126,7 +148,11 @@ class DeployAppengineAtomicOperation implements AtomicOperation<DeploymentResult
     def writtenFullConfigFilePaths = writeConfigFiles(description.configFiles, repositoryPath, applicationDirectoryRoot)
     def repositoryFullConfigFilePaths =
       (description.configFilepaths?.collect { Paths.get(repositoryPath, applicationDirectoryRoot ?: '.', it).toString() } ?: []) as List<String>
-    def deployCommand = ["gcloud", "app", "deploy", *(repositoryFullConfigFilePaths + writtenFullConfigFilePaths)]
+    def deployCommand = ["gcloud"]
+    if (gcloudReleaseTrack != null && gcloudReleaseTrack != GcloudReleaseTrack.STABLE) {
+      deployCommand << gcloudReleaseTrack.toString().toLowerCase()
+    }
+    deployCommand += ["app", "deploy", *(repositoryFullConfigFilePaths + writtenFullConfigFilePaths)]
     deployCommand << "--version=$versionName"
     deployCommand << (description.promote ? "--promote" : "--no-promote")
     deployCommand << (description.stopPreviousVersion ? "--stop-previous-version": "--no-stop-previous-version")

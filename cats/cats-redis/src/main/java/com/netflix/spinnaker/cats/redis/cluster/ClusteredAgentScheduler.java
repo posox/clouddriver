@@ -26,6 +26,8 @@ import com.netflix.spinnaker.cats.module.CatsModuleAware;
 import com.netflix.spinnaker.cats.redis.RedisClientDelegate;
 import com.netflix.spinnaker.cats.thread.NamedThreadFactory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -37,39 +39,69 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 @SuppressFBWarnings
 public class ClusteredAgentScheduler extends CatsModuleAware implements AgentScheduler<AgentLock>, Runnable {
+    private static enum Status {
+        SUCCESS,
+        FAILURE
+    }
+
+    private static final Logger logger = LoggerFactory.getLogger(ClusteredAgentScheduler.class);
+
     private final RedisClientDelegate redisClientDelegate;
     private final NodeIdentity nodeIdentity;
     private final AgentIntervalProvider intervalProvider;
     private final ExecutorService agentExecutionPool;
+    private final Pattern enabledAgentPattern;
+
     private final Map<String, AgentExecutionAction> agents = new ConcurrentHashMap<>();
-    private final Map<String, Long> activeAgents = new ConcurrentHashMap<>();
+    private final Map<String, NextAttempt> activeAgents = new ConcurrentHashMap<>();
     private final NodeStatusProvider nodeStatusProvider;
 
-    public ClusteredAgentScheduler(RedisClientDelegate redisClientDelegate, NodeIdentity nodeIdentity, AgentIntervalProvider intervalProvider, NodeStatusProvider nodeStatusProvider) {
-        this(redisClientDelegate, nodeIdentity, intervalProvider, nodeStatusProvider, Executors.newSingleThreadScheduledExecutor(new NamedThreadFactory(ClusteredAgentScheduler.class.getSimpleName())), Executors.newCachedThreadPool(new NamedThreadFactory(AgentExecutionAction.class.getSimpleName())));
+    public ClusteredAgentScheduler(RedisClientDelegate redisClientDelegate,
+                                   NodeIdentity nodeIdentity,
+                                   AgentIntervalProvider intervalProvider,
+                                   NodeStatusProvider nodeStatusProvider,
+                                   String enabledAgentPattern) {
+        this(
+          redisClientDelegate,
+          nodeIdentity,
+          intervalProvider,
+          nodeStatusProvider,
+          Executors.newSingleThreadScheduledExecutor(new NamedThreadFactory(ClusteredAgentScheduler.class.getSimpleName())),
+          Executors.newCachedThreadPool(new NamedThreadFactory(AgentExecutionAction.class.getSimpleName())),
+          enabledAgentPattern
+        );
     }
 
-    public ClusteredAgentScheduler(RedisClientDelegate redisClientDelegate, NodeIdentity nodeIdentity, AgentIntervalProvider intervalProvider, NodeStatusProvider nodeStatusProvider, ScheduledExecutorService lockPollingScheduler, ExecutorService agentExecutionPool) {
+    public ClusteredAgentScheduler(RedisClientDelegate redisClientDelegate,
+                                   NodeIdentity nodeIdentity,
+                                   AgentIntervalProvider intervalProvider,
+                                   NodeStatusProvider nodeStatusProvider,
+                                   ScheduledExecutorService lockPollingScheduler,
+                                   ExecutorService agentExecutionPool,
+                                   String enabledAgentPattern) {
         this.redisClientDelegate = redisClientDelegate;
         this.nodeIdentity = nodeIdentity;
         this.intervalProvider = intervalProvider;
         this.nodeStatusProvider = nodeStatusProvider;
         this.agentExecutionPool = agentExecutionPool;
+        this.enabledAgentPattern = Pattern.compile(enabledAgentPattern);
+
         lockPollingScheduler.scheduleAtFixedRate(this, 0, 1, TimeUnit.SECONDS);
     }
 
-    private Map<String, Long> acquire() {
-        Map<String, Long> acquired = new HashMap<>(agents.size());
+    private Map<String, NextAttempt> acquire() {
+        Map<String, NextAttempt> acquired = new HashMap<>(agents.size());
         Set<String> skip = new HashSet<>(activeAgents.keySet());
         for (Map.Entry<String, AgentExecutionAction> agent : agents.entrySet()) {
             if (!skip.contains(agent.getKey())) {
                 final String agentType = agent.getKey();
                 AgentIntervalProvider.Interval interval = intervalProvider.getInterval(agent.getValue().getAgent());
                 if (acquireRunKey(agentType, interval.getTimeout())) {
-                    acquired.put(agentType, System.currentTimeMillis() + interval.getInterval());
+                    acquired.put(agentType, new NextAttempt(System.currentTimeMillis(), interval.getInterval(), interval.getErrorInterval()));
                 }
             }
         }
@@ -89,9 +121,9 @@ public class ClusteredAgentScheduler extends CatsModuleAware implements AgentSch
     }
 
     private void runAgents() {
-        Map<String, Long> thisRun = acquire();
+        Map<String, NextAttempt> thisRun = acquire();
         activeAgents.putAll(thisRun);
-        for (final Map.Entry<String, Long> toRun : thisRun.entrySet()) {
+        for (final Map.Entry<String, NextAttempt> toRun : thisRun.entrySet()) {
             final AgentExecutionAction exec = agents.get(toRun.getKey());
             agentExecutionPool.submit(new AgentJob(toRun.getValue(), exec, this));
         }
@@ -147,12 +179,26 @@ public class ClusteredAgentScheduler extends CatsModuleAware implements AgentSch
     }
 
     @Override
-    public void schedule(Agent agent, AgentExecution agentExecution, ExecutionInstrumentation executionInstrumentation) {
+    public void schedule(Agent agent,
+                         AgentExecution agentExecution,
+                         ExecutionInstrumentation executionInstrumentation) {
+        if (!enabledAgentPattern.matcher(agent.getClass().getSimpleName().toLowerCase()).matches()) {
+          logger.debug(
+            "Agent is not enabled (agent: {}, agentType: {}, pattern: {})",
+            agent.getClass().getSimpleName(),
+            agent.getAgentType(),
+            enabledAgentPattern.pattern()
+          );
+          return;
+        }
+
         if (agent instanceof AgentSchedulerAware) {
           ((AgentSchedulerAware)agent).setAgentScheduler(this);
         }
 
-        final AgentExecutionAction agentExecutionAction = new AgentExecutionAction(agent, agentExecution, executionInstrumentation);
+        AgentExecutionAction agentExecutionAction = new AgentExecutionAction(
+          agent, agentExecution, executionInstrumentation
+        );
         agents.put(agent.getAgentType(), agentExecutionAction);
     }
 
@@ -162,23 +208,44 @@ public class ClusteredAgentScheduler extends CatsModuleAware implements AgentSch
         agents.remove(agent.getAgentType());
     }
 
+    private static class NextAttempt {
+        private final long currentTime;
+        private final long successInterval;
+        private final long errorInterval;
+
+        public NextAttempt(long currentTime, long successInterval, long errorInterval) {
+            this.currentTime = currentTime;
+            this.successInterval = successInterval;
+            this.errorInterval = errorInterval;
+        }
+
+        public long getNextTime(Status status) {
+            if (status == Status.SUCCESS) {
+                return currentTime + successInterval;
+            }
+
+            return currentTime + errorInterval;
+        }
+    }
+
     private static class AgentJob implements Runnable {
-        private final long lockReleaseTime;
+        private final NextAttempt lockReleaseTime;
         private final AgentExecutionAction action;
         private final ClusteredAgentScheduler scheduler;
 
-        public AgentJob(long lockReleaseTime, AgentExecutionAction action, ClusteredAgentScheduler scheduler) {
-            this.lockReleaseTime = lockReleaseTime;
+        public AgentJob(NextAttempt times, AgentExecutionAction action, ClusteredAgentScheduler scheduler) {
+            this.lockReleaseTime = times;
             this.action = action;
             this.scheduler = scheduler;
         }
 
         @Override
         public void run() {
+            Status status = Status.FAILURE;
             try {
-                action.execute();
+                status = action.execute();
             } finally {
-                scheduler.agentCompleted(action.getAgent().getAgentType(), lockReleaseTime);
+                scheduler.agentCompleted(action.getAgent().getAgentType(), lockReleaseTime.getNextTime(status));
             }
         }
     }
@@ -198,14 +265,16 @@ public class ClusteredAgentScheduler extends CatsModuleAware implements AgentSch
             return agent;
         }
 
-        public void execute() {
+        Status execute() {
             try {
                 executionInstrumentation.executionStarted(agent);
                 long startTime = System.nanoTime();
                 agentExecution.executeAgent(agent);
                 executionInstrumentation.executionCompleted(agent, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime));
+                return Status.SUCCESS;
             } catch (Throwable cause) {
                 executionInstrumentation.executionFailed(agent, cause);
+                return Status.FAILURE;
             }
         }
 

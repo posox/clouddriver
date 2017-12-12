@@ -40,7 +40,7 @@ import static com.netflix.spinnaker.cats.agent.AgentDataType.Authority.AUTHORITA
 import static com.netflix.spinnaker.cats.agent.AgentDataType.Authority.INFORMATIVE
 
 @Slf4j
-class KubernetesSecurityGroupCachingAgent extends KubernetesCachingAgent<KubernetesV1Credentials> implements OnDemandAgent {
+class KubernetesSecurityGroupCachingAgent extends KubernetesV1CachingAgent implements OnDemandAgent {
 
   private static final OnDemandAgent.OnDemandType ON_DEMAND_TYPE = OnDemandAgent.OnDemandType.SecurityGroup
 
@@ -148,11 +148,14 @@ class KubernetesSecurityGroupCachingAgent extends KubernetesCachingAgent<Kuberne
     }
 
     providerCache.getAll(Keys.Namespace.ON_DEMAND.ns, keys).collect {
-      [
-          details  : Keys.parse(it.id),
-          cacheTime: it.attributes.cacheTime,
+      def details = Keys.parse(it.id)
+
+      return [
+          details       : details,
+          moniker       : convertOnDemandDetails(details),
+          cacheTime     : it.attributes.cacheTime,
           processedCount: it.attributes.processedCount,
-          processedTime: it.attributes.processedTime
+          processedTime : it.attributes.processedTime
       ]
     }
   }

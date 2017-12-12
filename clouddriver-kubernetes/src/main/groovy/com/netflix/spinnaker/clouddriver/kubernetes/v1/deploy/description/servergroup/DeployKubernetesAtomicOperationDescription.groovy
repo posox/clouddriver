@@ -19,13 +19,13 @@ package com.netflix.spinnaker.clouddriver.kubernetes.v1.deploy.description.serve
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.netflix.spinnaker.clouddriver.deploy.DeployDescription
-import com.netflix.spinnaker.clouddriver.kubernetes.v1.deploy.description.KubernetesAtomicOperationDescription
+import com.netflix.spinnaker.clouddriver.kubernetes.v1.deploy.description.KubernetesKindAtomicOperationDescription
 import groovy.transform.AutoClone
 import groovy.transform.Canonical
 
 @AutoClone
 @Canonical
-class DeployKubernetesAtomicOperationDescription extends KubernetesAtomicOperationDescription implements DeployDescription {
+class DeployKubernetesAtomicOperationDescription extends KubernetesKindAtomicOperationDescription implements DeployDescription {
   String application
   String stack
   String freeFormDetails
@@ -36,6 +36,7 @@ class DeployKubernetesAtomicOperationDescription extends KubernetesAtomicOperati
   List<String> loadBalancers
   List<String> securityGroups
   List<KubernetesContainerDescription> containers
+  List<KubernetesContainerDescription> initContainers
   List<KubernetesVolumeSource> volumeSources
   Capacity capacity
   KubernetesScalingPolicy scalingPolicy
@@ -46,11 +47,12 @@ class DeployKubernetesAtomicOperationDescription extends KubernetesAtomicOperati
   Map<String, String> nodeSelector
   KubernetesSecurityContext securityContext
   KubernetesDeployment deployment
-  KubernetesStrategy updateStrategy
+  KubernetesUpdateController updateController
   Long terminationGracePeriodSeconds
   String serviceAccountName
   Integer sequence
   KubernetesPodSpecDescription podSpec
+  String podManagementPolicy
   KubernetesDnsPolicy dnsPolicy
   Source source
   List<KubernetesPersistentVolumeClaimDescription> volumeClaims
@@ -104,6 +106,7 @@ class KubernetesContainerDescription {
 
   List<KubernetesVolumeMount> volumeMounts
   List<KubernetesEnvVar> envVars
+  List<KubernetesEnvFromSource> envFrom
 
   List<String> command
   List<String> args
@@ -125,6 +128,15 @@ class KubernetesDeployment {
 
 @AutoClone
 @Canonical
+class KubernetesUpdateController {
+  boolean enabled
+  KubernetesStrategy updateStrategy
+  int minReadySeconds
+  Integer revisionHistoryLimit
+}
+
+@AutoClone
+@Canonical
 class KubernetesStrategy {
   KubernetesStrategyType type
   KubernetesRollingUpdate rollingUpdate
@@ -135,6 +147,7 @@ class KubernetesStrategy {
 class KubernetesRollingUpdate {
   String maxUnavailable
   String maxSurge
+  Integer partition
 }
 
 enum KubernetesStrategyType {
@@ -155,6 +168,28 @@ class KubernetesEnvVar {
   String name
   String value
   KubernetesEnvVarSource envSource
+}
+
+@AutoClone
+@Canonical
+class KubernetesEnvFromSource {
+  String prefix
+  KubernetesConfigMapEnvSource configMapRef
+  KubernetesSecretEnvSource secretRef
+}
+
+@AutoClone
+@Canonical
+class KubernetesConfigMapEnvSource {
+  String name
+  boolean optional
+}
+
+@AutoClone
+@Canonical
+class KubernetesSecretEnvSource {
+  String name
+  boolean optional
 }
 
 @AutoClone
@@ -208,6 +243,7 @@ class KubernetesFieldRefSource {
 class KubernetesSecretSource {
   String secretName
   String key
+  Boolean optional = true
 }
 
 @AutoClone
@@ -215,6 +251,7 @@ class KubernetesSecretSource {
 class KubernetesConfigMapSource {
   String configMapName
   String key
+  Boolean optional = true
 }
 
 @AutoClone

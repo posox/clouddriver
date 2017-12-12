@@ -27,14 +27,14 @@ import com.netflix.spinnaker.clouddriver.requestqueue.RequestQueue
 import com.netflix.spinnaker.kork.web.exceptions.NotFoundException
 import com.netflix.spinnaker.moniker.Moniker
 import groovy.transform.Canonical
+import groovy.util.logging.Slf4j
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.context.MessageSource
-import org.springframework.context.i18n.LocaleContextHolder
-import org.springframework.http.HttpStatus
 import org.springframework.security.access.prepost.PostAuthorize
 import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.web.bind.annotation.*
 
+@Slf4j
 @RestController
 @RequestMapping("/applications/{application}/clusters")
 class ClusterController {
@@ -155,7 +155,11 @@ class ClusterController {
                      @PathVariable String serverGroupName,
                      @RequestParam(value = "region", required = false) String region) {
     // we can optimize loads iff the cloud provider supports loading minimal clusters (ie. w/o instances)
-    def shouldExpand = !clusterProviders.find { it.cloudProviderId == type }.supportsMinimalClusters()
+    def clusterProvider = clusterProviders.find { it.cloudProviderId == type }
+    if (!clusterProvider) {
+      log.warn("No cluster provider found for type (type: ${type}, account: ${account})")
+    }
+    def shouldExpand = clusterProvider ? !clusterProvider.supportsMinimalClusters() : true
 
     def serverGroups = getServerGroups(application, account, clusterName, type, region, shouldExpand).findAll {
       region ? it.name == serverGroupName && it.region == region : it.name == serverGroupName
@@ -166,7 +170,7 @@ class ClusterController {
 
     serverGroups = shouldExpand ? serverGroups : serverGroups.collect {
       // server groups were minimally loaded initially and require expansion
-      serverGroupController.getServerGroup(application, account, it.region, it.name)
+      serverGroupController.getServerGroupByApplication(application, account, it.region, it.name)
     }
 
     region ? serverGroups?.getAt(0) : serverGroups
@@ -195,7 +199,11 @@ class ClusterController {
     }
 
     // we can optimize loads iff the cloud provider supports loading minimal clusters (ie. w/o instances)
-    def shouldExpand = !clusterProviders.find { it.cloudProviderId == cloudProvider }.supportsMinimalClusters()
+    def clusterProvider = clusterProviders.find { it.cloudProviderId == cloudProvider }
+    if (!clusterProvider) {
+      log.warn("No cluster provider found for cloud provider (cloudProvider: ${cloudProvider}, account: ${account})")
+    }
+    def shouldExpand = clusterProvider ? !clusterProvider.supportsMinimalClusters() : true
 
     // load all server groups w/o instance details (this is reasonably efficient)
     def sortedServerGroups = getServerGroups(application, account, clusterName, cloudProvider, null /* region */, shouldExpand).findAll {
@@ -215,37 +223,42 @@ class ClusterController {
       throw new NotFoundException("No server groups found (account: ${account}, cluster: ${clusterName}, type: ${cloudProvider})")
     }
 
-    if (!shouldExpand) {
-      sortedServerGroups = sortedServerGroups.collect {
-        serverGroupController.getServerGroup(application, account, it.region, it.name)
+    def expandServerGroup = { ServerGroup serverGroup ->
+      if (shouldExpand) {
+        // server group was already expanded on initial load
+        return serverGroup
       }
+
+      return serverGroupController.getServerGroupByApplication(
+        application, account, serverGroup.region, serverGroup.name
+      )
     }
 
     switch (tsg) {
       case TargetServerGroup.CURRENT:
-        return sortedServerGroups.get(0)
+        return expandServerGroup(sortedServerGroups.get(0))
       case TargetServerGroup.PREVIOUS:
         if (sortedServerGroups.size() == 1) {
           throw new NotFoundException("Target not found (target: ${target})")
         }
-        return sortedServerGroups.get(1)
+        return expandServerGroup(sortedServerGroups.get(1))
       case TargetServerGroup.OLDEST:
         // At least two expected, but some cases just want the oldest no matter what.
         if (Boolean.valueOf(validateOldest) && sortedServerGroups.size() == 1) {
           throw new NotFoundException("Target not found (target: ${target})")
         }
-        return sortedServerGroups.last()
+        return expandServerGroup(sortedServerGroups.last())
       case TargetServerGroup.LARGEST:
         // Choose the server group with the most instances, falling back to newest in the case of a tie.
-        return sortedServerGroups.sort { lhs, rhs ->
-          rhs.instances.size() <=> lhs.instances.size() ?:
-              rhs.createdTime <=> lhs.createdTime
-        }.get(0)
+        return expandServerGroup(sortedServerGroups.sort { lhs, rhs ->
+          (rhs.instances?.size() ?: 0) <=> (lhs.instances?.size() ?: 0) ?:
+            rhs.createdTime <=> lhs.createdTime
+        }.get(0))
       case TargetServerGroup.FAIL:
         if (sortedServerGroups.size() > 1) {
           throw new NotFoundException("More than one target found (scope: ${scope}, serverGroups: ${sortedServerGroups*.name})")
         }
-        return sortedServerGroups.get(0)
+        return expandServerGroup(sortedServerGroups.get(0))
     }
   }
 

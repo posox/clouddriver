@@ -17,11 +17,14 @@
 package com.netflix.spinnaker.clouddriver.google.provider.view
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.netflix.spectator.api.Registry
 import com.netflix.spinnaker.cats.cache.Cache
 import com.netflix.spinnaker.cats.cache.CacheData
 import com.netflix.spinnaker.cats.cache.RelationshipCacheFilter
 import com.netflix.spinnaker.clouddriver.google.GoogleCloudProvider
+import com.netflix.spinnaker.clouddriver.google.GoogleExecutorTraits
 import com.netflix.spinnaker.clouddriver.google.cache.Keys
+import com.netflix.spinnaker.clouddriver.google.deploy.GCEUtil
 import com.netflix.spinnaker.clouddriver.google.model.GoogleInstance
 import com.netflix.spinnaker.clouddriver.google.model.GoogleSecurityGroup
 import com.netflix.spinnaker.clouddriver.google.model.health.GoogleLoadBalancerHealth
@@ -36,7 +39,7 @@ import static com.netflix.spinnaker.clouddriver.google.cache.Keys.Namespace.*
 
 @Component
 @Slf4j
-class GoogleInstanceProvider implements InstanceProvider<GoogleInstance.View> {
+class GoogleInstanceProvider implements InstanceProvider<GoogleInstance.View>, GoogleExecutorTraits {
 
   @Autowired
   final Cache cacheView
@@ -49,6 +52,9 @@ class GoogleInstanceProvider implements InstanceProvider<GoogleInstance.View> {
 
   @Autowired
   GoogleSecurityGroupProvider securityGroupProvider
+
+  @Autowired
+  Registry registry
 
   final String cloudProvider = GoogleCloudProvider.ID
 
@@ -90,7 +96,11 @@ class GoogleInstanceProvider implements InstanceProvider<GoogleInstance.View> {
     def googleInstance = getInstance(account, region, id)
 
     if (googleInstance) {
-      return compute.instances().getSerialPortOutput(project, googleInstance.zone, id).execute().contents
+      return timeExecute(
+          compute.instances().getSerialPortOutput(project, googleInstance.zone, id),
+          "compute.instances.getSerialPortOutput",
+          TAG_SCOPE, SCOPE_ZONAL, TAG_ZONE, googleInstance.zone
+          ).contents
     }
 
     return null
@@ -120,9 +130,10 @@ class GoogleInstanceProvider implements InstanceProvider<GoogleInstance.View> {
       }
     }
 
-    def serverGroupKey = cacheData.relationships[SERVER_GROUPS.ns]?.first()
-    if (serverGroupKey) {
-      instance.serverGroup = Keys.parse(serverGroupKey).serverGroup
+    // TODO(duftler): Replace this with whatever key we come up with to enable easier grouping via stackdriver.
+    def serverGroup = GCEUtil.getLocalName(cacheData.attributes.metadata?.items?.find { it.key == "created-by" }?.value)
+    if (serverGroup) {
+      instance.serverGroup = serverGroup
     }
 
     instance.securityGroups = GoogleSecurityGroupProvider.getMatchingServerGroupNames(

@@ -17,9 +17,10 @@
 package com.netflix.spinnaker.clouddriver
 
 import com.netflix.spinnaker.clouddriver.appengine.AppengineConfiguration
+import com.netflix.spinnaker.clouddriver.appengine.artifacts.AppengineStorageConfiguration
+import com.netflix.spinnaker.clouddriver.artifacts.ArtifactConfiguration
 import com.netflix.spinnaker.clouddriver.aws.AwsConfiguration
 import com.netflix.spinnaker.clouddriver.azure.AzureConfiguration
-import com.netflix.spinnaker.clouddriver.cf.config.CloudFoundryConfig
 import com.netflix.spinnaker.clouddriver.core.CloudDriverConfig
 import com.netflix.spinnaker.clouddriver.core.RetrofitConfig
 import com.netflix.spinnaker.clouddriver.dcos.DcosConfiguration
@@ -56,14 +57,15 @@ import java.security.Security
   DeployConfiguration,
   RetrofitConfig,
   AwsConfiguration,
+  ArtifactConfiguration,
   EcsConfiguration,
   AppengineConfiguration,
+  AppengineStorageConfiguration,
   GoogleConfiguration,
   OracleBMCSConfiguration,
   KubernetesConfiguration,
   OpenstackConfiguration,
   DockerRegistryConfiguration,
-  CloudFoundryConfig,
   AzureConfiguration,
   SecurityConfig,
   EurekaProviderConfiguration,

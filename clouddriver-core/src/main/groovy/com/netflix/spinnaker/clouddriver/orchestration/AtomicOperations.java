@@ -74,4 +74,9 @@ public final class AtomicOperations {
 
   // Manifest operations
   public static final String DEPLOY_MANIFEST = "deployManifest";
+  public static final String DELETE_MANIFEST = "deleteManifest";
+  public static final String SCALE_MANIFEST = "scaleManifest";
+  public static final String PAUSE_ROLLOUT_MANIFEST = "pauseRolloutManifest";
+  public static final String RESUME_ROLLOUT_MANIFEST = "resumeRolloutManifest";
+  public static final String UNDO_ROLLOUT_MANIFEST = "undoRolloutManifest";
 }

@@ -22,18 +22,104 @@ import io.kubernetes.client.util.KubeConfig;
 import io.kubernetes.client.util.SSLUtils;
 
 import groovy.util.logging.Slf4j
+import org.apache.commons.lang3.StringUtils
+import org.yaml.snakeyaml.Yaml
+import org.yaml.snakeyaml.constructor.SafeConstructor
 
-import javax.net.ssl.KeyManager;
+import java.nio.file.Files;
 
 @Slf4j
 public class KubernetesApiClientConfig extends Config {
   String kubeconfigFile
+  String context
+  String cluster
+  String user
+  String userAgent
+  Boolean serviceAccount
 
-  public KubernetesApiClientConfig(String kubeconfigFile) {
+  public KubernetesApiClientConfig(String kubeconfigFile, String context, String cluster, String user, String userAgent, Boolean serviceAccount) {
     this.kubeconfigFile = kubeconfigFile
+    this.context = context
+    this.user = user
+    this.userAgent = userAgent
+    this.serviceAccount = serviceAccount
   }
 
   public ApiClient getApiCient() throws Exception {
-    return (kubeconfigFile ? fromConfig(kubeconfigFile) : Config.defaultClient())
+    if (serviceAccount) {
+      return withServiceAccount()
+    } else {
+      return withKubeConfig()
+    }
+  }
+
+  ApiClient withServiceAccount() {
+    ApiClient client = new ApiClient()
+
+    try {
+      boolean serviceAccountCaCertExists = Files.isRegularFile(new File(io.fabric8.kubernetes.client.Config.KUBERNETES_SERVICE_ACCOUNT_CA_CRT_PATH).toPath())
+      if (serviceAccountCaCertExists) {
+        client.setSslCaCert(new FileInputStream(io.fabric8.kubernetes.client.Config.KUBERNETES_SERVICE_ACCOUNT_CA_CRT_PATH))
+      } else {
+        throw new IllegalStateException("Could not find CA cert for service account at $io.fabric8.kubernetes.client.Config.KUBERNETES_SERVICE_ACCOUNT_CA_CRT_PATH")
+      }
+    } catch(IOException e) {
+      throw new IllegalStateException("Could not find CA cert for service account at $io.fabric8.kubernetes.client.Config.KUBERNETES_SERVICE_ACCOUNT_CA_CRT_PATH", e)
+    }
+
+    try {
+      String serviceTokenCandidate = new String(Files.readAllBytes(new File(io.fabric8.kubernetes.client.Config.KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH).toPath()))
+      if (serviceTokenCandidate != null) {
+        client.setApiKey("Bearer " + serviceTokenCandidate)
+      } else {
+        throw new IllegalStateException("Did not find service account token at $io.fabric8.kubernetes.client.Config.KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH")
+      }
+    } catch (IOException e) {
+      throw new IllegalStateException("Could not read service account token at $io.fabric8.kubernetes.client.Config.KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH", e)
+    }
+
+    return client
+  }
+
+  ApiClient withKubeConfig() {
+    KubeConfig kubeconfig
+
+    try {
+      if (StringUtils.isEmpty(kubeconfigFile)) {
+        kubeconfig = KubeConfig.loadDefaultKubeConfig()
+      } else {
+        kubeconfig = KubeConfig.loadKubeConfig(new FileReader(kubeconfigFile))
+      }
+    } catch (FileNotFoundException e) {
+      throw new RuntimeException("Unable to create credentials from kubeconfig file: " + e, e)
+    } catch (Exception e2) {
+      throw new RuntimeException("Missing required field(s) in kubenetes configuration file.")
+    }
+
+    InputStream is = new FileInputStream(kubeconfigFile)
+    Reader input = new InputStreamReader(is)
+    Yaml yaml = new Yaml(new SafeConstructor())
+    Object config = yaml.load(input)
+    Map<String, Object> configMap = (Map<String, Object>)config
+
+    //TODO: Need to validate cluster and user when client library exposes these api.
+    if (StringUtils.isEmpty(context) && !configMap.get("current-context")) {
+      throw new RuntimeException("Missing required field ${context} in kubeconfig file and clouddriver configuration.")
+    }
+
+    if (!StringUtils.isEmpty(context)) {
+      kubeconfig.setContext(context);
+    }
+
+    ApiClient client = Config.fromConfig(kubeconfig);
+
+    if (!StringUtils.isEmpty(userAgent)) {
+      client.setUserAgent(userAgent);
+    }
+
+    is.close()
+    input.close()
+
+    return client
   }
 }

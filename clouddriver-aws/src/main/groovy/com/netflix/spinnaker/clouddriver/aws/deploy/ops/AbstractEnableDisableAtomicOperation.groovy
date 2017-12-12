@@ -85,7 +85,7 @@ abstract class AbstractEnableDisableAtomicOperation implements AtomicOperation<V
     try {
       def regionScopedProvider = regionScopedProviderFactory.forRegion(credentials, region)
       def loadBalancing = regionScopedProvider.amazonElasticLoadBalancing
-      def lbv2 = regionScopedProvider.getAmazonElasticLoadBalancingV2()
+      def lbv2 = regionScopedProvider.getAmazonElasticLoadBalancingV2(true)
 
       def asgService = regionScopedProvider.asgService
       def asg = asgService.getAutoScalingGroup(serverGroupName)
@@ -150,6 +150,7 @@ abstract class AbstractEnableDisableAtomicOperation implements AtomicOperation<V
         task.updateStatus phaseName, "Only disabling instances $instanceIds on ASG $serverGroupName with percentage ${description.desiredPercentage}"
       }
 
+      // ELB/ALB registration
       if (disable) {
         changeRegistrationOfInstancesWithLoadBalancer(asg.loadBalancerNames, instanceIds) { String loadBalancerName, List<Instance> instances ->
           try {
@@ -178,6 +179,7 @@ abstract class AbstractEnableDisableAtomicOperation implements AtomicOperation<V
         }
       }
 
+      // eureka registration
       if (credentials.discoveryEnabled && instanceIds) {
         def status = disable ? AbstractEurekaSupport.DiscoveryStatus.Disable : AbstractEurekaSupport.DiscoveryStatus.Enable
         task.updateStatus phaseName, "Marking ASG $serverGroupName as $status with Discovery"
@@ -186,7 +188,8 @@ abstract class AbstractEnableDisableAtomicOperation implements AtomicOperation<V
             credentials: credentials,
             region: region,
             asgName: serverGroupName,
-            instanceIds: instanceIds
+            instanceIds: instanceIds,
+            targetHealthyDeployPercentage: description.targetHealthyDeployPercentage != null ? description.targetHealthyDeployPercentage : 100
         )
         discoverySupport.updateDiscoveryStatusForInstances(
             enableDisableInstanceDiscoveryDescription, task, phaseName, status, instanceIds

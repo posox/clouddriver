@@ -16,6 +16,9 @@
 
 package com.netflix.spinnaker.clouddriver.kubernetes.v1.api
 
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.github.fge.jsonpatch.diff.JsonDiff
 import com.netflix.spectator.api.Clock
 import com.netflix.spectator.api.Registry
 import com.netflix.spinnaker.clouddriver.kubernetes.v1.deploy.exception.KubernetesClientOperationException
@@ -29,14 +32,13 @@ import io.kubernetes.client.models.*
 import io.kubernetes.client.apis.ExtensionsV1beta1Api
 import io.kubernetes.client.apis.AutoscalingV1Api
 import io.kubernetes.client.apis.CoreV1Api
-import org.slf4j.Logger
-import org.slf4j.LoggerFactory
+
+import groovy.util.logging.Slf4j
 
 import java.util.concurrent.TimeUnit
 
 @Slf4j
 class KubernetesClientApiAdapter {
-  private static final Logger LOG = LoggerFactory.getLogger(KubernetesClientApiConverter)
 
   String account
 
@@ -46,7 +48,9 @@ class KubernetesClientApiAdapter {
   static final int API_CALL_TIMEOUT_SECONDS = 60
   static final int TERMINATION_GRACE_PERIOD_SECONDS = 30
   static final String API_CALL_RESULT_FORMAT = ""
+  static final int SHUTDOWN_ALL_PODS = 0
   static final String DEPLOYMENT_ANNOTATION = "deployment.kubernetes.io"
+  private final ObjectMapper mapper = new ObjectMapper();
   final Registry spectatorRegistry
   final Clock spectatorClock
   final ApiClient client
@@ -84,12 +88,12 @@ class KubernetesClientApiAdapter {
       new KubernetesClientOperationException("$operation", e)
   }
 
-  Boolean blockUntilResourceConsistent(Object desired, Closure<Long> getGeneration, Closure getResource) {
-    def current = getResource()
+  Boolean blockUntilResourceConsistent(Closure getResource) {
+    Boolean isPodRunning = getResource()
 
     def wait = RETRY_INITIAL_WAIT_MILLIS
     def attempts = 0
-    while (getGeneration(current) < getGeneration(desired)) {
+    while (!isPodRunning ) {
       attempts += 1
       if (attempts > RETRY_COUNT) {
         return false
@@ -98,7 +102,7 @@ class KubernetesClientApiAdapter {
       sleep(wait)
       wait = [wait * 2, RETRY_MAX_WAIT_MILLIS].min()
 
-      current = getResource()
+      isPodRunning = getResource()
     }
 
     return true
@@ -143,11 +147,8 @@ class KubernetesClientApiAdapter {
 
   List<V1beta1StatefulSet> getStatefulSets(String namespace) {
     exceptionWrapper("statefulSets.list", "Get Stateful Sets", namespace) {
-      /*
-       "fixme" and note this is k8s-client api issue and we are working this as workaround.
-        */
       try {
-        V1beta1StatefulSetList list = apiInstance.listNamespacedStatefulSet(namespace, null, null, null, null, API_CALL_TIMEOUT_SECONDS, false)
+        V1beta1StatefulSetList list = apiInstance.listNamespacedStatefulSet(namespace, null, null, null, true, null, null, null, API_CALL_TIMEOUT_SECONDS, false);
         String apiVersion = list.getApiVersion();
         for (V1beta1StatefulSet item : list.getItems()) {
           item.setApiVersion(apiVersion);
@@ -155,19 +156,16 @@ class KubernetesClientApiAdapter {
         }
 
         return list.items
-      } catch (ApiException ex) {
-        log.debug("Cannot fetch Statefulsets Required Kubernetes VERSION>=1.6")
+      } catch(Exception e){
+        log.debug(e.message.toString())
       }
     }
   }
 
   List<V1beta1DaemonSet> getDaemonSets(String namespace) {
     exceptionWrapper("daemonSets.list", "Get Daemon Sets", namespace) {
-      /*
-     "fixme" and note this is k8s-client api issue and we are working this as workaround.
-      */
       try {
-        V1beta1DaemonSetList list = extApi.listNamespacedDaemonSet(namespace, null, null, null, null, API_CALL_TIMEOUT_SECONDS, null)
+        V1beta1DaemonSetList list = extApi.listNamespacedDaemonSet(namespace, null, null, null, null, null, null, null, API_CALL_TIMEOUT_SECONDS, false)
         String apiVersion = list.getApiVersion();
         for (V1beta1DaemonSet item : list.getItems()) {
           item.setApiVersion(apiVersion);
@@ -175,8 +173,8 @@ class KubernetesClientApiAdapter {
         }
 
         return list.items
-      } catch (ApiException ex) {
-        log.debug("Cannot fetch Daemonsets Required Kubernetes VERSION>=1.6")
+      } catch (ApiException e) {
+        log.debug(e.message.toString())
       }
     }
   }
@@ -187,6 +185,54 @@ class KubernetesClientApiAdapter {
     }
   }
 
+  V1beta1StatefulSet replaceStatfulSet(String name, String namespace, V1beta1StatefulSet statefulSet) {
+    exceptionWrapper("statefulSets.replace", "Replace Stateful Set ${name}", namespace) {
+      def deployedControllerSet = getStatefulSet(name, namespace)
+      deployedControllerSet.spec.replicas = statefulSet.spec.replicas
+      deployedControllerSet.spec.template = statefulSet.spec.template
+      deployedControllerSet.spec.updateStrategy = statefulSet.spec.updateStrategy
+
+      return apiInstance.replaceNamespacedStatefulSet(name, namespace, deployedControllerSet,  API_CALL_RESULT_FORMAT)
+    }
+  }
+
+  private Map[] determineJsonPatch(Object current, Object desired) {
+    JsonNode desiredNode = mapper.convertValue(desired, JsonNode.class);
+    JsonNode currentNode = mapper.convertValue(current, JsonNode.class);
+
+    return mapper.convertValue(JsonDiff.asJson(currentNode, desiredNode), Map[].class);
+  }
+
+  V1beta1StatefulSet resizeStatefulSet(String name, String namespace, int targetSize) {
+    exceptionWrapper("statefulSets.resize", "Resize Stateful Set $name", namespace) {
+      V1beta1StatefulSet current = getStatefulSet(name, namespace)
+      V1beta1StatefulSet desired = getStatefulSet(name, namespace)
+      desired.spec.replicas = targetSize
+
+      final Map[] jsonPatch = determineJsonPatch(current, desired);
+      V1beta1StatefulSet statefulSet = apiInstance.patchNamespacedStatefulSet(name, namespace, jsonPatch, null)
+
+      return statefulSet
+    }
+  }
+
+  void hardDestroyStatefulSet(String name, String namespace, V1DeleteOptions deleteOptions, Boolean orphanDependents, String propagationPolicy) {
+    exceptionWrapper("statefulSets.delete", "Delete Stateful Set $name", namespace) {
+      V1beta1StatefulSet statefulSet = getStatefulSet(name, namespace)
+      resizeStatefulSet(name, namespace, 0)
+
+      getPods(namespace, statefulSet.metadata.labels).items.forEach({ item ->
+        deletePod(item.metadata.name, namespace, null, null, null, true)
+      })
+
+      try {
+        apiInstance.deleteNamespacedStatefulSet(name, namespace, deleteOptions ?: new V1DeleteOptions(), API_CALL_RESULT_FORMAT, TERMINATION_GRACE_PERIOD_SECONDS, orphanDependents, propagationPolicy)
+      } catch (Exception e) {
+        log.debug(e.message)
+      }
+    }
+  }
+
   V1HorizontalPodAutoscaler getAutoscaler(String namespace, String name) {
     exceptionWrapper("horizontalPodAutoscalers.get", "Get Autoscaler $name", namespace) {
       V1HorizontalPodAutoscaler result = null
@@ -194,7 +240,7 @@ class KubernetesClientApiAdapter {
       try {
         result = scalerApi.readNamespacedHorizontalPodAutoscalerStatus(name, namespace, API_CALL_RESULT_FORMAT)
       } catch (Exception ex) {
-        LOG.info "Unable to find autoscaler {$name in $namespace}: $ex."
+        log.info "Unable to find autoscaler {$name in $namespace}: $ex."
       }
 
       return result
@@ -207,6 +253,17 @@ class KubernetesClientApiAdapter {
     }
   }
 
+  V1beta1StatefulSet getStatefulSet(String statefulSetName, String namespace) {
+    exceptionWrapper("statefulSets.create", "Get Stateful Set ${statefulSetName}", namespace) {
+      try {
+        return apiInstance.readNamespacedStatefulSet(statefulSetName, namespace, API_CALL_RESULT_FORMAT, null, null)
+      } catch (Exception e) {
+        log.debug(e.message)
+      }
+      return null
+    }
+  }
+
   V1PodList getPods(String namespace, Map<String, String> labels) {
     exceptionWrapper("pods.list", "Get Pods matching $labels", namespace) {
       String label
@@ -216,17 +273,13 @@ class KubernetesClientApiAdapter {
         String value = entry.getValue()
         label = key + "=" + value
       }
-      coreApi.listNamespacedPod(namespace, null, null, label, null, API_CALL_TIMEOUT_SECONDS, null)
+      coreApi.listNamespacedPod(namespace, null, null, null, false, label, null, null, API_CALL_TIMEOUT_SECONDS,false)
     }
   }
 
-  boolean deleteAutoscaler(String namespace, String name) {
+  boolean deleteAutoscaler(String namespace, String name, V1DeleteOptions deleteOptions, Boolean orphanDependents, String propagationPolicy)  {
     exceptionWrapper("horizontalPodAutoscalers.delete", "Destroy Autoscaler $name", namespace) {
-      V1DeleteOptions deleteOption = new V1DeleteOptions()
-      Boolean orphanDependents = true
-      String propagationPolicy = ""
-
-      return scalerApi.deleteNamespacedHorizontalPodAutoscaler(name, namespace, deleteOption, API_CALL_RESULT_FORMAT, TERMINATION_GRACE_PERIOD_SECONDS, orphanDependents, propagationPolicy);
+      return scalerApi.deleteNamespacedHorizontalPodAutoscaler(name, namespace, deleteOptions, API_CALL_RESULT_FORMAT, TERMINATION_GRACE_PERIOD_SECONDS, orphanDependents, propagationPolicy);
     }
   }
 
@@ -236,10 +289,77 @@ class KubernetesClientApiAdapter {
     }
   }
 
+  V1beta1DaemonSet replaceDaemonSet(String name, String namespace, V1beta1DaemonSet daemonSet) {
+    exceptionWrapper("DaemonSet.replace", "Replace Daemon Set ${name}", namespace) {
+      def deployedControllerSet = getDaemonSet(name, namespace)
+      deployedControllerSet.spec.template = daemonSet.spec.template
+      deployedControllerSet.spec.updateStrategy = daemonSet.spec.updateStrategy
+
+      return extApi.replaceNamespacedDaemonSet(name, namespace, deployedControllerSet, API_CALL_RESULT_FORMAT)
+    }
+  }
+
+  V1beta1DaemonSet getDaemonSet(String name, String namespace) {
+    exceptionWrapper("DaemonSet.get", "Get Daemon Set ${name}", namespace) {
+      try {
+        return extApi.readNamespacedDaemonSet(name, namespace, API_CALL_RESULT_FORMAT, true, false)
+      } catch (Exception e) {
+        log.debug(e.message)
+      }
+      return null
+    }
+  }
+
+  void hardDestroyDaemonSet(String name, String namespace, V1DeleteOptions deleteoptions, Boolean orphanDependents, String propagationPolicy) {
+    exceptionWrapper("daemonSets.delete", "Hard Destroy Daemon Set ${name}", namespace) {
+      def deployedControllerSet = getDaemonSet(name, namespace)
+
+      V1Status status
+      try {
+        status = extApi.deleteNamespacedDaemonSet(name, namespace, deleteoptions ?: new V1DeleteOptions(), API_CALL_RESULT_FORMAT, TERMINATION_GRACE_PERIOD_SECONDS, orphanDependents, propagationPolicy);
+      } catch (Exception e) {
+        log.debug(e.message)
+      }
+
+      getPods(namespace, deployedControllerSet.metadata.labels).items.forEach({ item ->
+        deletePod(item.metadata.name, namespace, null, null, null, true)
+      })
+    }
+  }
+
   List<String> getNamespacesByName() {
     exceptionWrapper("namespaces.list", "Get Namespaces", null) {
-      V1NamespaceList result = coreApi.listNamespace(API_CALL_RESULT_FORMAT, null, null, null, 30, null);
-      return result.items
+      V1NamespaceList result = coreApi.listNamespace(API_CALL_RESULT_FORMAT, null, null, null, null, null, null, 30, null)
+      return result.items.collect { n -> n.getMetadata().getName() }
+    }
+  }
+
+  void deletePod(String name, String namespace, V1DeleteOptions deleteOptions, Boolean orphanDependents, String propagationPolicy, Boolean force) {
+    exceptionWrapper("pod.delete", "Destroy Pod ${name}", namespace) {
+      V1Status status
+      try {
+        if (force) {
+          deleteOptions = new V1DeleteOptions()
+          deleteOptions.kind = "DeleteOptions"
+          deleteOptions.apiVersion "v1"
+          deleteOptions.gracePeriodSeconds = 0
+        }
+
+        status = coreApi.deleteNamespacedPod(name, namespace, deleteOptions ?: new V1DeleteOptions(), API_CALL_RESULT_FORMAT, TERMINATION_GRACE_PERIOD_SECONDS, null, null)
+      } catch (Exception e) {
+        log.debug(e.message)
+      }
+    }
+  }
+
+  V1Pod getPodStatus(String name, String namespace) {
+    exceptionWrapper("pods.status", "Ge pod status ${name}", namespace) {
+      V1Pod pod
+      try {
+        pod = coreApi.readNamespacedPodStatus(name, namespace, API_CALL_RESULT_FORMAT)
+      } catch (Exception e) {
+        log.debug(e.message)
+      }
     }
   }
 }

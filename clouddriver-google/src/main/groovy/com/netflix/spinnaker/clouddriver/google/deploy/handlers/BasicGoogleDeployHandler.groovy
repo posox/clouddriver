@@ -234,23 +234,22 @@ class BasicGoogleDeployHandler implements DeployHandler<BasicGoogleDeployDescrip
             TAG_SCOPE, SCOPE_GLOBAL)
 
         Backend backendToAdd
+        GoogleHttpLoadBalancingPolicy policy
         if (loadBalancingPolicy?.balancingMode) {
-          instanceMetadata[(GoogleServerGroup.View.LOAD_BALANCING_POLICY)] = objectMapper.writeValueAsString(loadBalancingPolicy)
-          backendToAdd = GCEUtil.backendFromLoadBalancingPolicy(loadBalancingPolicy)
+          policy = loadBalancingPolicy
         } else if (sourcePolicyJson) {
-          // We don't have to update the metadata here, since we are reading these properties directly from it.
-          backendToAdd = GCEUtil.backendFromLoadBalancingPolicy(objectMapper.readValue(sourcePolicyJson, GoogleHttpLoadBalancingPolicy))
+          policy = objectMapper.readValue(sourcePolicyJson, GoogleHttpLoadBalancingPolicy)
         } else {
-          instanceMetadata[(GoogleServerGroup.View.LOAD_BALANCING_POLICY)] = objectMapper.writeValueAsString(
-            // Sane defaults in case of a create with no LoadBalancingPolicy specified.
-            new GoogleHttpLoadBalancingPolicy(
+          log.warn("No load balancing policy found in the operation description or the source server group, adding defaults")
+          policy = new GoogleHttpLoadBalancingPolicy(
               balancingMode: GoogleLoadBalancingPolicy.BalancingMode.UTILIZATION,
               maxUtilization: 0.80,
               capacityScaler: 1.0,
-            )
+              namedPorts: [new NamedPort(name: GoogleHttpLoadBalancingPolicy.HTTP_DEFAULT_PORT_NAME, port: GoogleHttpLoadBalancingPolicy.HTTP_DEFAULT_PORT)]
           )
-          backendToAdd = new Backend()
         }
+        GCEUtil.updateMetadataWithLoadBalancingPolicy(policy, instanceMetadata, objectMapper)
+        backendToAdd = GCEUtil.backendFromLoadBalancingPolicy(policy)
 
         if (isRegional) {
           backendToAdd.setGroup(GCEUtil.buildRegionalServerGroupUrl(project, region, serverGroupName))
@@ -308,6 +307,10 @@ class BasicGoogleDeployHandler implements DeployHandler<BasicGoogleDeployDescrip
       instanceMetadata = userDataMap
     }
 
+    if (isRegional && description.selectZones) {
+      instanceMetadata[GoogleServerGroup.View.SELECT_ZONES] = true
+    }
+
     def metadata = GCEUtil.buildMetadataFromMap(instanceMetadata)
 
     def tags = GCEUtil.buildTagsFromList(description.tags)
@@ -319,6 +322,14 @@ class BasicGoogleDeployHandler implements DeployHandler<BasicGoogleDeployDescrip
     def serviceAccount = GCEUtil.buildServiceAccount(description.serviceAccountEmail, description.authScopes)
 
     def scheduling = GCEUtil.buildScheduling(description)
+
+    if (labels == null) {
+      labels = [:]
+    }
+
+    // Used to group instances when querying for metrics from kayenta.
+    labels['spinnaker-region'] = region
+    labels['spinnaker-server-group'] = serverGroupName
 
     def instanceProperties = new InstanceProperties(machineType: machineTypeName,
                                                     disks: attachedDisks,
@@ -405,32 +416,31 @@ class BasicGoogleDeployHandler implements DeployHandler<BasicGoogleDeployDescrip
         .setAutoHealingPolicies(autoHealingPolicy)
 
     if (hasBackendServices && (description?.loadBalancingPolicy || description?.source?.serverGroupName))  {
-      NamedPort namedPort = null
+      List<NamedPort> namedPorts = []
       def sourceGroupName = description?.source?.serverGroupName
+
       // Note: this favors the explicitly specified load balancing policy over the source server group.
       if (sourceGroupName && !description?.loadBalancingPolicy) {
         def sourceServerGroup = googleClusterProvider.getServerGroup(description.accountName, description.source.region, sourceGroupName)
         if (!sourceServerGroup) {
           log.warn("Could not locate source server group ${sourceGroupName} to update named port.")
         }
-        namedPort = new NamedPort(
-            name: GoogleHttpLoadBalancingPolicy.HTTP_PORT_NAME,
-            port: sourceServerGroup?.namedPorts[(GoogleHttpLoadBalancingPolicy.HTTP_PORT_NAME)] ?: GoogleHttpLoadBalancingPolicy.HTTP_DEFAULT_PORT,
-        )
+        namedPorts = sourceServerGroup?.namedPorts?.collect { name, port -> new NamedPort(name: name, port: port) }
       } else {
-        namedPort = new NamedPort(
-            name: GoogleHttpLoadBalancingPolicy.HTTP_PORT_NAME,
-            port: description?.loadBalancingPolicy?.listeningPort ?: GoogleHttpLoadBalancingPolicy.HTTP_DEFAULT_PORT
-        )
+        def loadBalancingPolicy = description?.loadBalancingPolicy
+        if (loadBalancingPolicy?.namedPorts != null)  {
+          namedPorts = description?.loadBalancingPolicy?.namedPorts
+        } else if (loadBalancingPolicy?.listeningPort) {
+          log.warn("Deriving named ports from deprecated 'listeningPort' attribute. Please update your deploy description to use 'namedPorts'.")
+          namedPorts = [new NamedPort(name: GoogleHttpLoadBalancingPolicy.HTTP_DEFAULT_PORT_NAME, port: loadBalancingPolicy?.listeningPort)]
+        }
       }
-      if (!namedPort) {
+
+      if (!namedPorts) {
         log.warn("Could not locate named port on either load balancing policy or source server group. Setting default named port.")
-        namedPort = new NamedPort(
-            name: GoogleHttpLoadBalancingPolicy.HTTP_PORT_NAME,
-            port: GoogleHttpLoadBalancingPolicy.HTTP_DEFAULT_PORT,
-        )
+        namedPorts = [new NamedPort(name: GoogleHttpLoadBalancingPolicy.HTTP_DEFAULT_PORT_NAME, port: GoogleHttpLoadBalancingPolicy.HTTP_DEFAULT_PORT)]
       }
-      instanceGroupManager.setNamedPorts([namedPort])
+      instanceGroupManager.setNamedPorts(namedPorts)
     }
 
     def willUpdateBackendServices = !description.disableTraffic && hasBackendServices
@@ -438,6 +448,14 @@ class BasicGoogleDeployHandler implements DeployHandler<BasicGoogleDeployDescrip
     def willUpdateIlbs = !description.disableTraffic && internalLoadBalancers
 
     if (isRegional) {
+      if (description.selectZones && description.distributionPolicy && description.distributionPolicy.zones) {
+        log.info("Configuring explicit zones selected for regional server group: ${description.distributionPolicy.zones}")
+        List<DistributionPolicyZoneConfiguration> selectedZones = description.distributionPolicy.zones.collect { String z ->
+          new DistributionPolicyZoneConfiguration().setZone(GCEUtil.buildZoneUrl(project, z))
+        }
+        DistributionPolicy distributionPolicy = new DistributionPolicy().setZones(selectedZones)
+        instanceGroupManager.setDistributionPolicy(distributionPolicy)
+      }
       migCreateOperation = timeExecute(
           compute.regionInstanceGroupManagers().insert(project, region, instanceGroupManager),
           "compute.regionInstanceGroupManagers.insert",

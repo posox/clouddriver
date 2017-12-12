@@ -16,13 +16,13 @@
 
 package com.netflix.spinnaker.clouddriver.kubernetes.v1.deploy.description.securitygroup
 
-import com.netflix.spinnaker.clouddriver.kubernetes.v1.deploy.description.KubernetesAtomicOperationDescription
+import com.netflix.spinnaker.clouddriver.kubernetes.v1.deploy.description.KubernetesKindAtomicOperationDescription
 import groovy.transform.AutoClone
 import groovy.transform.Canonical
 
 @AutoClone
 @Canonical
-class KubernetesSecurityGroupDescription extends KubernetesAtomicOperationDescription {
+class KubernetesSecurityGroupDescription extends KubernetesKindAtomicOperationDescription {
   String securityGroupName
   String app
   String stack
@@ -30,8 +30,11 @@ class KubernetesSecurityGroupDescription extends KubernetesAtomicOperationDescri
   String namespace
 
   KubernetesIngressBackend ingress
-  List<KubernetesIngressTls> tls
+  List<KubernetesIngressTlS> tls
   List<KubernetesIngressRule> rules
+
+  Map<String,String> annotations
+  Map<String,String> labels
 }
 
 @AutoClone
@@ -43,7 +46,7 @@ class KubernetesIngressBackend {
 
 @AutoClone
 @Canonical
-class KubernetesIngressTls {
+class KubernetesIngressTlS {
   List<String> hosts
   String secretName
 }

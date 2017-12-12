@@ -25,6 +25,8 @@ import com.netflix.spinnaker.cats.cache.Cache
 import com.netflix.spinnaker.cats.cache.CacheData
 import com.netflix.spinnaker.cats.cache.RelationshipCacheFilter
 import com.netflix.spinnaker.clouddriver.aws.AmazonCloudProvider
+import com.netflix.spinnaker.clouddriver.aws.cache.Keys
+import com.netflix.spinnaker.clouddriver.aws.model.AmazonSecurityGroup
 import com.netflix.spinnaker.clouddriver.aws.security.AmazonCredentials
 import com.netflix.spinnaker.clouddriver.model.AddressableRange
 import com.netflix.spinnaker.clouddriver.model.SecurityGroupProvider
@@ -32,8 +34,6 @@ import com.netflix.spinnaker.clouddriver.model.securitygroups.IpRangeRule
 import com.netflix.spinnaker.clouddriver.model.securitygroups.Rule
 import com.netflix.spinnaker.clouddriver.model.securitygroups.SecurityGroupRule
 import com.netflix.spinnaker.clouddriver.security.AccountCredentialsProvider
-import com.netflix.spinnaker.clouddriver.aws.cache.Keys
-import com.netflix.spinnaker.clouddriver.aws.model.AmazonSecurityGroup
 import groovy.transform.Canonical
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Component
@@ -209,10 +209,22 @@ class AmazonSecurityGroupProvider implements SecurityGroupProvider<AmazonSecurit
   }
 
   private void addIpRangeRules(IpPermission permission, Map<String, Map> rules) {
-    permission.ipRanges.each { ipRange ->
-      String key = "$ipRange:$permission.ipProtocol";
+    permission.ipv6Ranges.each { ipRange ->
+      String key = "$ipRange:$permission.ipProtocol"
       if (!rules.containsKey(key)) {
-        def rangeParts = ipRange.split('/')
+        def rangeParts = ipRange.cidrIpv6.split('/')
+        rules.put(key, [
+          range     : new AddressableRange(ip: rangeParts[0], cidr: "/${rangeParts[1]}"),
+          protocol  : permission.ipProtocol,
+          portRanges: [] as SortedSet
+        ])
+      }
+      rules.get(key).portRanges += new Rule.PortRange(startPort: permission.fromPort, endPort: permission.toPort)
+    }
+    permission.ipv4Ranges.each { ipRange ->
+      String key = "$ipRange:$permission.ipProtocol"
+      if (!rules.containsKey(key)) {
+        def rangeParts = ipRange.cidrIp.split('/')
         rules.put(key, [
           range     : new AddressableRange(ip: rangeParts[0], cidr: "/${rangeParts[1]}"),
           protocol  : permission.ipProtocol,

@@ -20,8 +20,9 @@ import com.netflix.spectator.api.Registry;
 import com.netflix.spinnaker.clouddriver.kubernetes.KubernetesCloudProvider;
 import com.netflix.spinnaker.clouddriver.kubernetes.config.LinkedDockerRegistryConfiguration;
 import com.netflix.spinnaker.clouddriver.kubernetes.v1.security.KubernetesV1Credentials;
-import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.KubernetesManifest;
+import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.manifest.KubernetesManifest;
 import com.netflix.spinnaker.clouddriver.kubernetes.v2.names.KubernetesManifestNamer;
+import com.netflix.spinnaker.clouddriver.kubernetes.v2.op.job.KubectlJobExecutor;
 import com.netflix.spinnaker.clouddriver.kubernetes.v2.security.KubernetesV2Credentials;
 import com.netflix.spinnaker.clouddriver.names.NamerRegistry;
 import com.netflix.spinnaker.clouddriver.security.AccountCredentials;
@@ -157,10 +158,13 @@ public class KubernetesNamedAccountCredentials<C extends KubernetesCredentials> 
     String accountType;
     String context;
     String cluster;
+    String oAuthServiceAccount;
+    List<String> oAuthScopes;
     String user;
     String userAgent;
     String kubeconfigFile;
     Boolean serviceAccount;
+    Boolean configureImagePullSecrets;
     List<String> namespaces;
     List<String> omitNamespaces;
     int cacheThreads;
@@ -170,6 +174,8 @@ public class KubernetesNamedAccountCredentials<C extends KubernetesCredentials> 
     List<LinkedDockerRegistryConfiguration> dockerRegistries;
     Registry spectatorRegistry;
     AccountCredentialsRepository accountCredentialsRepository;
+    KubectlJobExecutor jobExecutor;
+    boolean debug;
 
     Builder name(String name) {
       this.name = name;
@@ -201,6 +207,16 @@ public class KubernetesNamedAccountCredentials<C extends KubernetesCredentials> 
       return this;
     }
 
+    Builder oAuthServiceAccount(String oAuthServiceAccount) {
+      this.oAuthServiceAccount = oAuthServiceAccount;
+      return this;
+    }
+
+    Builder oAuthScopes(List<String> oAuthScopes) {
+      this.oAuthScopes = oAuthScopes;
+      return this;
+    }
+
     Builder user(String user) {
       this.user = user;
       return this;
@@ -218,6 +234,11 @@ public class KubernetesNamedAccountCredentials<C extends KubernetesCredentials> 
 
     Builder serviceAccount(Boolean serviceAccount) {
       this.serviceAccount = serviceAccount;;
+      return this;
+    }
+
+    Builder configureImagePullSecrets(Boolean configureImagePullSecrets) {
+      this.configureImagePullSecrets = configureImagePullSecrets;
       return this;
     }
 
@@ -269,6 +290,16 @@ public class KubernetesNamedAccountCredentials<C extends KubernetesCredentials> 
       return this;
     }
 
+    Builder jobExecutor(KubectlJobExecutor jobExecutor) {
+      this.jobExecutor = jobExecutor;
+      return this;
+    }
+
+    Builder debug(boolean debug) {
+      this.debug = debug;
+      return this;
+    }
+
     private C buildCredentials() {
       switch (providerVersion) {
         case v1:
@@ -280,6 +311,7 @@ public class KubernetesNamedAccountCredentials<C extends KubernetesCredentials> 
               user,
               userAgent,
               serviceAccount,
+              configureImagePullSecrets,
               namespaces,
               omitNamespaces,
               dockerRegistries,
@@ -291,7 +323,19 @@ public class KubernetesNamedAccountCredentials<C extends KubernetesCredentials> 
               .withProvider(KubernetesCloudProvider.getID())
               .withAccount(name)
               .setNamer(KubernetesManifest.class, new KubernetesManifestNamer());
-          return (C) new KubernetesV2Credentials(name, spectatorRegistry);
+          return (C) new KubernetesV2Credentials.Builder()
+              .accountName(name)
+              .kubeconfigFile(kubeconfigFile)
+              .context(context)
+              .oAuthServiceAccount(oAuthServiceAccount)
+              .oAuthScopes(oAuthScopes)
+              .userAgent(userAgent)
+              .namespaces(namespaces)
+              .omitNamespaces(omitNamespaces)
+              .registry(spectatorRegistry)
+              .debug(debug)
+              .jobExecutor(jobExecutor)
+              .build();
         default:
           throw new IllegalArgumentException("Unknown provider type: " + providerVersion);
       }
@@ -322,6 +366,10 @@ public class KubernetesNamedAccountCredentials<C extends KubernetesCredentials> 
         requiredGroupMembership = Collections.unmodifiableList(requiredGroupMembership);
       } else {
         requiredGroupMembership = Collections.emptyList();
+      }
+
+      if (configureImagePullSecrets == null) {
+        configureImagePullSecrets = true;
       }
 
       if (credentials == null) {

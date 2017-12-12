@@ -20,14 +20,15 @@ package com.netflix.spinnaker.clouddriver.kubernetes.v2.caching.agent
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.netflix.spinnaker.cats.cache.DefaultCacheData
 import com.netflix.spinnaker.clouddriver.kubernetes.v2.caching.Keys
-import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.KubernetesApiVersion
-import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.KubernetesAugmentedManifest
-import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.KubernetesKind
-import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.KubernetesManifest
-import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.KubernetesManifestAnnotater
-import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.KubernetesManifestSpinnakerRelationships
-import io.kubernetes.client.models.V1beta1ReplicaSet
-import org.apache.commons.lang3.tuple.Triple
+import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.manifest.KubernetesApiVersion
+import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.manifest.KubernetesKind
+import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.manifest.KubernetesManifest
+import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.manifest.KubernetesManifestAnnotater
+import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.manifest.KubernetesManifestMetadata
+import com.netflix.spinnaker.clouddriver.kubernetes.v2.description.manifest.KubernetesManifestSpinnakerRelationships
+import com.netflix.spinnaker.kork.artifacts.model.Artifact
+import com.netflix.spinnaker.moniker.Moniker
+import org.apache.commons.lang3.tuple.Pair
 import org.yaml.snakeyaml.Yaml
 import spock.lang.Specification
 import spock.lang.Unroll
@@ -52,33 +53,31 @@ metadata:
   name: $name
   namespace: $namespace
 """
-    def relationships = new KubernetesManifestSpinnakerRelationships()
-        .setApplication(application)
-        .setCluster(cluster)
-    def metadata = new KubernetesAugmentedManifest.Metadata()
-        .setRelationships(relationships)
+    def moniker = Moniker.builder()
+        .app(application)
+        .cluster(cluster)
+        .build()
 
     def manifest = stringToManifest(rawManifest)
-    KubernetesManifestAnnotater.annotateManifest(manifest, metadata)
-    V1beta1ReplicaSet resource = mapper.convertValue(manifest, V1beta1ReplicaSet.class)
+    KubernetesManifestAnnotater.annotateManifest(manifest, moniker)
 
     when:
-    def cacheData = KubernetesCacheDataConverter.fromResource(account, mapper, resource)
+    def cacheData = KubernetesCacheDataConverter.convertAsResource(account, manifest, [])
 
     then:
     if (application == null) {
       true
     } else {
-      cacheData.relationships.get(Keys.LogicalKind.APPLICATION.toString()) == [Keys.application(application)]
+      cacheData.relationships.get(Keys.LogicalKind.APPLICATIONS.toString()) == [Keys.application(application)]
       if (cluster) {
-        cacheData.relationships.get(Keys.LogicalKind.CLUSTER.toString()) == [Keys.cluster(account, cluster)]
+        cacheData.relationships.get(Keys.LogicalKind.CLUSTERS.toString()) == [Keys.cluster(account, application, cluster)]
       } else {
-        cacheData.relationships.get(Keys.LogicalKind.CLUSTER.toString()) == null
+        cacheData.relationships.get(Keys.LogicalKind.CLUSTERS.toString()) == null
       }
       cacheData.attributes.get("name") == name
       cacheData.attributes.get("namespace") == namespace
       cacheData.attributes.get("kind") == kind
-      cacheData.id == Keys.infrastructure(apiVersion, kind, account, namespace, name)
+      cacheData.id == Keys.infrastructure(kind, account, namespace, name)
     }
 
     where:
@@ -98,7 +97,7 @@ metadata:
     def result = KubernetesCacheDataConverter.ownerReferenceRelationships(account, namespace, ownerRefs)
 
     then:
-    result.get(kind.toString()) == [Keys.infrastructure(apiVersion, kind, account, namespace, name)]
+    result.get(kind.toString()) == [Keys.infrastructure(kind, account, namespace, name)]
 
     where:
     kind                       | apiVersion                              | account           | cluster       | namespace        | name
@@ -111,7 +110,7 @@ metadata:
   @Unroll
   def "given a cache data entry, invert its relationships"() {
     setup:
-    def id = Keys.infrastructure(version, kind, "account", "namespace", "version")
+    def id = Keys.infrastructure(kind, "account", "namespace", "version")
     def cacheData = new DefaultCacheData(id, null, relationships)
 
     when:
@@ -131,16 +130,16 @@ metadata:
     KubernetesKind.REPLICA_SET | KubernetesApiVersion.APPS_V1BETA1 | ["application": [Keys.application("app")]]
     KubernetesKind.REPLICA_SET | KubernetesApiVersion.APPS_V1BETA1 | ["application": []]
     KubernetesKind.REPLICA_SET | KubernetesApiVersion.APPS_V1BETA1 | [:]
-    KubernetesKind.REPLICA_SET | KubernetesApiVersion.APPS_V1BETA1 | ["deployment": [Keys.infrastructure(KubernetesApiVersion.APPS_V1BETA1, KubernetesKind.DEPLOYMENT, "account", "namespace", "a-name")]]
-    KubernetesKind.SERVICE     | KubernetesApiVersion.V1           | ["cluster": [Keys.cluster("account", "name")], "application": [Keys.application("blarg")]]
-    KubernetesKind.SERVICE     | KubernetesApiVersion.V1           | ["cluster": [Keys.cluster("account", "name")], "application": [Keys.application("blarg"), Keys.application("asdfasdf")]]
+    KubernetesKind.REPLICA_SET | KubernetesApiVersion.APPS_V1BETA1 | ["deployment": [Keys.infrastructure(KubernetesKind.DEPLOYMENT, "account", "namespace", "a-name")]]
+    KubernetesKind.SERVICE     | KubernetesApiVersion.V1           | ["cluster": [Keys.cluster("account", "app", "name")], "application": [Keys.application("blarg")]]
+    KubernetesKind.SERVICE     | KubernetesApiVersion.V1           | ["cluster": [Keys.cluster("account", "app", "name")], "application": [Keys.application("blarg"), Keys.application("asdfasdf")]]
   }
 
-  def filterRelationships(Collection<String> keys, List<Triple<KubernetesApiVersion, KubernetesKind, String>> existingResources) {
+  def filterRelationships(Collection<String> keys, List<Pair<KubernetesKind, String>> existingResources) {
     return keys.findAll { sk ->
       def key = (Keys.InfrastructureCacheKey) Keys.parseKey(sk).get()
-      return existingResources.find { Triple<KubernetesApiVersion, KubernetesKind, String> lb ->
-        return lb.getLeft() == key.getKubernetesApiVersion() && lb.getMiddle() == key.getKubernetesKind() && lb.getRight() == key.getName()
+      return existingResources.find { Pair<KubernetesKind, String> lb ->
+        return lb.getLeft() == key.getKubernetesKind() && lb.getRight() == key.getName()
       } != null
     }
   }
@@ -149,17 +148,28 @@ metadata:
   def "correctly derive annotated spinnaker relationships"() {
     setup:
     def spinnakerRelationships = new KubernetesManifestSpinnakerRelationships()
-      .setCluster(cluster)
-      .setApplication(application)
       .setLoadBalancers(loadBalancers)
 
+    def moniker = Moniker.builder()
+      .cluster(cluster)
+      .app(application)
+      .build()
+
+    def artifact = new Artifact()
+
+    def metadata = KubernetesManifestMetadata.builder()
+      .relationships(spinnakerRelationships)
+      .moniker(moniker)
+      .artifact(artifact)
+      .build()
+
     when:
-    def relationships = KubernetesCacheDataConverter.annotatedRelationships(ACCOUNT, NAMESPACE, spinnakerRelationships)
+    def relationships = KubernetesCacheDataConverter.annotatedRelationships(ACCOUNT, NAMESPACE, metadata)
     def parsedLbs = loadBalancers.collect { lb -> KubernetesManifest.fromFullResourceName(lb) }
 
     then:
-    relationships.get(Keys.LogicalKind.CLUSTER.toString()) == [Keys.cluster(ACCOUNT, cluster)]
-    relationships.get(Keys.LogicalKind.APPLICATION.toString()) == [Keys.application(application)]
+    relationships.get(Keys.LogicalKind.CLUSTERS.toString()) == [Keys.cluster(ACCOUNT, application, cluster)]
+    relationships.get(Keys.LogicalKind.APPLICATIONS.toString()) == [Keys.application(application)]
 
     def services = filterRelationships(relationships.get(KubernetesKind.SERVICE.toString()), parsedLbs)
     def ingresses = filterRelationships(relationships.get(KubernetesKind.INGRESS.toString()), parsedLbs)
@@ -168,12 +178,12 @@ metadata:
 
     where:
     cluster | application | loadBalancers
-    "a"     | "b"         | ["v1|service|hi"]
-    "a"     | "b"         | ["v1|service|hi", "v1|service|bye"]
+    "a"     | "b"         | ["service hi"]
+    "a"     | "b"         | ["service hi", "service bye"]
     "a"     | "b"         | []
-    "a"     | "b"         | ["v1|service|hi", "v1|service|bye", "extensions/v1beta1|ingress|into"]
-    "a"     | "b"         | ["extensions/v1beta1|ingress|into"]
-    "a"     | "b"         | ["extensions/v1beta1|ingress|into", "extensions/v1beta1|ingress|outof"]
-    "a"     | "b"         | ["v1|service|hi", "v1|service|bye", "extensions/v1beta1|ingress|into", "extensions/v1beta1|ingress|outof"]
+    "a"     | "b"         | ["service hi", "service bye", "ingress into"]
+    "a"     | "b"         | ["ingress into"]
+    "a"     | "b"         | ["ingress into", "ingress outof"]
+    "a"     | "b"         | ["service hi", "service bye", "ingress into", "ingress outof"]
   }
 }

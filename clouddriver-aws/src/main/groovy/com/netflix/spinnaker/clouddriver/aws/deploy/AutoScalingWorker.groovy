@@ -30,6 +30,8 @@ import com.netflix.spinnaker.clouddriver.aws.model.AutoScalingProcessType
 import com.netflix.spinnaker.clouddriver.aws.model.SubnetData
 import com.netflix.spinnaker.clouddriver.aws.model.SubnetTarget
 import com.netflix.spinnaker.clouddriver.aws.services.RegionScopedProviderFactory
+import com.netflix.spinnaker.kork.core.RetrySupport
+
 /**
  * A worker class dedicated to the deployment of "applications", following many of Netflix's common AWS conventions.
  *
@@ -41,6 +43,8 @@ class AutoScalingWorker {
   private static Task getTask() {
     TaskRepository.threadLocalTask.get()
   }
+
+  private final RetrySupport retrySupport = new RetrySupport()
 
   private String application
   private String region
@@ -60,6 +64,7 @@ class AutoScalingWorker {
   private Boolean startDisabled
   private Boolean associatePublicIpAddress
   private String subnetType
+  private List<String> subnetIds
   private Integer cooldown
   private Collection<String> enabledMetrics
   private Integer healthCheckGracePeriod
@@ -85,7 +90,6 @@ class AutoScalingWorker {
   private RegionScopedProviderFactory.RegionScopedProvider regionScopedProvider
 
   AutoScalingWorker() {
-
   }
 
   /**
@@ -155,11 +159,24 @@ class AutoScalingWorker {
    *
    * @return list of subnet ids applicable to this deployment.
    */
-  List<String> getSubnetIds() {
-    subnetType ? getSubnets().subnetId : []
+  List<String> getSubnetIds(List<Subnet> allSubnetsForTypeAndAvailabilityZone) {
+    def subnetIds = allSubnetsForTypeAndAvailabilityZone*.subnetId
+
+    def invalidSubnetIds = (this.subnetIds ?: []).findAll { !subnetIds.contains(it) }
+    if (invalidSubnetIds) {
+      throw new IllegalStateException(
+        "One or more subnet ids are not valid (invalidSubnetIds: ${invalidSubnetIds.join(", ")}, subnetType: ${subnetType}, availabilityZones: ${availabilityZones})"
+      )
+    }
+
+    return this.subnetIds ?: subnetIds
   }
 
   private List<Subnet> getSubnets() {
+    if (!subnetType) {
+      return []
+    }
+
     DescribeSubnetsResult result = regionScopedProvider.amazonEC2.describeSubnets()
     List<Subnet> mySubnets = []
     for (subnet in result.subnets) {
@@ -203,11 +220,11 @@ class AutoScalingWorker {
     }
 
     // Favor subnetIds over availability zones
-    def subnetIds = subnetIds?.join(',')
+    def subnetIds = getSubnetIds(getSubnets())?.join(',')
     if (subnetIds) {
       task.updateStatus AWS_PHASE, " > Deploying to subnetIds: $subnetIds"
       request.withVPCZoneIdentifier(subnetIds)
-    } else if (subnetType && !subnets) {
+    } else if (subnetType && !getSubnets()) {
       throw new RuntimeException("No suitable subnet was found for internal subnet purpose '${subnetType}'!")
     } else {
       task.updateStatus AWS_PHASE, "Deploying to availabilityZones: $availabilityZones"
@@ -215,7 +232,8 @@ class AutoScalingWorker {
     }
 
     def autoScaling = regionScopedProvider.autoScaling
-    autoScaling.createAutoScalingGroup(request)
+    retrySupport.retry({ -> autoScaling.createAutoScalingGroup(request) }, 5, 1000, true)
+
     if (suspendedProcesses) {
       autoScaling.suspendProcesses(new SuspendProcessesRequest(autoScalingGroupName: asgName, scalingProcesses: suspendedProcesses))
     }
@@ -226,8 +244,17 @@ class AutoScalingWorker {
         .withGranularity('1Minute')
         .withMetrics(enabledMetrics))
     }
-    autoScaling.updateAutoScalingGroup(new UpdateAutoScalingGroupRequest(autoScalingGroupName: asgName,
-      minSize: minInstances, maxSize: maxInstances, desiredCapacity: desiredInstances))
+
+    retrySupport.retry({ ->
+      autoScaling.updateAutoScalingGroup(
+        new UpdateAutoScalingGroupRequest(
+          autoScalingGroupName: asgName,
+          minSize: minInstances,
+          maxSize: maxInstances,
+          desiredCapacity: desiredInstances
+        )
+      )
+    }, 5, 1000, true)
 
     asgName
   }

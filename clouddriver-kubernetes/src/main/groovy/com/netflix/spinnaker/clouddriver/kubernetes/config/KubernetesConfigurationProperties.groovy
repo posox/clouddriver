@@ -30,15 +30,19 @@ class KubernetesConfigurationProperties {
     String accountType
     String context
     String cluster
+    String oAuthServiceAccount
+    List<String> oAuthScopes
     String user
     String kubeconfigFile
     Boolean serviceAccount
+    Boolean configureImagePullSecrets
     List<String> namespaces
     List<String> omitNamespaces
     Integer cacheThreads
     List<LinkedDockerRegistryConfiguration> dockerRegistries
     List<String> requiredGroupMembership
     Permissions.Builder permissions = new Permissions.Builder()
+    Boolean debug = false;
   }
 
   List<ManagedAccount> accounts = []

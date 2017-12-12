@@ -23,6 +23,7 @@ import com.netflix.spinnaker.clouddriver.model.LoadBalancerProvider
 import com.netflix.spinnaker.clouddriver.model.LoadBalancerServerGroup
 import com.netflix.spinnaker.clouddriver.openstack.OpenstackCloudProvider
 import com.netflix.spinnaker.clouddriver.openstack.domain.LoadBalancerResolver
+import com.netflix.spinnaker.moniker.Moniker
 import groovy.transform.Canonical
 import org.openstack4j.model.network.ext.HealthMonitorV2
 import org.openstack4j.model.network.ext.LbPoolV2
@@ -50,6 +51,9 @@ class OpenstackLoadBalancer implements LoadBalancerResolver, LoadBalancer {
   OpenstackNetwork network
   OpenstackSubnet subnet
   Set<String> securityGroups
+  String vipAddress
+
+  void setMoniker(Moniker _ignored) {}
 
   static OpenstackLoadBalancer from(LoadBalancerV2 loadBalancer, Set<ListenerV2> listeners, LbPoolV2 pool,
                                     HealthMonitorV2 healthMonitor, String account, String region) {
@@ -69,7 +73,8 @@ class OpenstackLoadBalancer implements LoadBalancerResolver, LoadBalancer {
       timeout: healthMonitor.timeout, type: healthMonitor.type.toString(), url: healthMonitor.urlPath) : null
     new OpenstackLoadBalancer(account: account, region: region, id: loadBalancer.id, name: loadBalancer.name,
       description: loadBalancer.description, status: loadBalancer.operatingStatus,
-      algorithm: pool?.lbMethod?.toString(), listeners: openstackListeners, healthMonitor: openstackHealthMonitor)
+      algorithm: pool?.lbMethod?.toString(), listeners: openstackListeners, healthMonitor: openstackHealthMonitor,
+      vipAddress: loadBalancer.vipAddress)
   }
 
   Long getCreatedTime() {
@@ -80,7 +85,7 @@ class OpenstackLoadBalancer implements LoadBalancerResolver, LoadBalancer {
   View getView() {
     new View(account: account, region: region, id: id, name: name,
       description: description, status: status, algorithm: algorithm,
-      listeners: listeners, healthMonitor: healthMonitor, ip: floatingIP?.floatingIpAddress,
+      listeners: listeners, healthMonitor: healthMonitor, ip: floatingIP?.floatingIpAddress ?: vipAddress,
       subnetId: subnet?.id, subnetName: subnet?.name, healths: healths,
       networkId: network?.id, networkName: network?.name, serverGroups: serverGroups ?: [].toSet(), securityGroups: securityGroups ?: [].toSet())
   }
@@ -118,6 +123,8 @@ class OpenstackLoadBalancer implements LoadBalancerResolver, LoadBalancer {
     String subnetName = ""
     String networkId = ""
     String networkName = ""
+
+    void setMoniker(Moniker _ignored) {}
 
     //oh groovy asts are fun - they bring insanity for everyone
     //we need this for creating sets

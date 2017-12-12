@@ -17,13 +17,13 @@
 package com.netflix.spinnaker.clouddriver.kubernetes.v1.deploy.description.loadbalancer
 
 import com.netflix.spinnaker.clouddriver.deploy.DeployDescription
-import com.netflix.spinnaker.clouddriver.kubernetes.v1.deploy.description.KubernetesAtomicOperationDescription
+import com.netflix.spinnaker.clouddriver.kubernetes.v1.deploy.description.KubernetesKindAtomicOperationDescription
 import groovy.transform.AutoClone
 import groovy.transform.Canonical
 
 @AutoClone
 @Canonical
-class KubernetesLoadBalancerDescription extends KubernetesAtomicOperationDescription implements DeployDescription {
+class KubernetesLoadBalancerDescription extends KubernetesKindAtomicOperationDescription implements DeployDescription {
   String name
   // If `loadBalancerName` is given in the description, it will override `name`.
   String loadBalancerName
@@ -41,6 +41,7 @@ class KubernetesLoadBalancerDescription extends KubernetesAtomicOperationDescrip
   String serviceType
 
   Map<String, String> serviceAnnotations
+  Map<String, String> serviceLabels
 }
 
 @AutoClone

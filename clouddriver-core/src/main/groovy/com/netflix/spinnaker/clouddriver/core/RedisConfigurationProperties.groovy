@@ -27,11 +27,20 @@ class RedisConfigurationProperties {
   @Canonical
   static class PollConfiguration {
     int intervalSeconds = 30
+    int errorIntervalSeconds = 30
     int timeoutSeconds = 300
+  }
+
+  @Canonical
+  static class AgentConfiguration {
+    String enabledPattern = ".*"
   }
 
   @NestedConfigurationProperty
   final PollConfiguration poll = new PollConfiguration()
+
+  @NestedConfigurationProperty
+  final AgentConfiguration agent = new AgentConfiguration()
 
   String connection = "redis://localhost:6379"
   String connectionPrevious = null

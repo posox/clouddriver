@@ -16,6 +16,11 @@ RUN apk --no-cache add --update bash wget unzip python=2.7.12-r0 && \
   mv linux-amd64/helm /usr/local/bin/helm && \
   rm -r linux-amd64 helm-v2.7.0-linux-amd64.tar.gz
 
+RUN wget https://storage.googleapis.com/kubernetes-release/release/stable.txt && wget https://storage.googleapis.com/kubernetes-release/release/$(cat stable.txt)/bin/linux/amd64/kubectl && \
+  rm stable.txt && \
+  chmod +x kubectl && \
+  mv ./kubectl /usr/local/bin/kubectl
+
 ENV PATH=$PATH:/opt/google-cloud-sdk/bin/
 
 CMD ["/opt/clouddriver/bin/clouddriver"]
