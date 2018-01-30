@@ -10,11 +10,11 @@ RUN apk --no-cache add --update bash wget unzip python=2.7.12-r0 && \
   rm google-cloud-sdk.zip && \
   CLOUDSDK_PYTHON="python2.7" /opt/google-cloud-sdk/install.sh --usage-reporting=false --bash-completion=false --disable-installation-options && \
   rm -rf ~/.config/gcloud && \
-  wget -nv https://kubernetes-helm.storage.googleapis.com/helm-v2.7.0-linux-amd64.tar.gz && \
-  tar xvf helm-v2.7.0-linux-amd64.tar.gz && \
+  wget -nv https://kubernetes-helm.storage.googleapis.com/helm-v2.7.2-linux-amd64.tar.gz && \
+  tar xvf helm-v2.7.2-linux-amd64.tar.gz && \
   chmod +x linux-amd64/helm && \
   mv linux-amd64/helm /usr/local/bin/helm && \
-  rm -r linux-amd64 helm-v2.7.0-linux-amd64.tar.gz
+  rm -r linux-amd64 helm-v2.7.2-linux-amd64.tar.gz
 
 RUN wget https://storage.googleapis.com/kubernetes-release/release/stable.txt && wget https://storage.googleapis.com/kubernetes-release/release/$(cat stable.txt)/bin/linux/amd64/kubectl && \
   rm stable.txt && \
