@@ -37,8 +37,9 @@ class HelmJobExecutor {
       sleep(sleepMs)
       jobStatus = jobExecutor.updateJob(jobId)
     }
-    if (jobStatus.result == JobStatus.Result.FAILURE && jobStatus.stdOut) {
-      throw new IllegalArgumentException("STDOUT:\n${jobStatus.stdOut}\nSTDERR:\n${jobStatus.stdErr}")
+    if (jobStatus.result == JobStatus.Result.FAILURE) {
+      throw new IllegalArgumentException("STDOUT:\n${jobStatus.stdOut}\n" +
+                                         "STDERR:\n${jobStatus.stdErr}")
     }
     jobStatus
   }
